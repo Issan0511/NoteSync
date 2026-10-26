@@ -29,8 +29,8 @@ class IpadDialog(QDialog):
         self.server = server
         self.on_passcode_changed = on_passcode_changed
 
-        self.setWindowTitle("📱 iPad / タブレット連携")
-        self.setFixedSize(480, 620)
+        self.setWindowTitle("📱 タブレット連携")
+        self.setFixedSize(480, 660)
         self.setStyleSheet("""
             QDialog {
                 background-color: #1e1e24;
@@ -61,7 +61,7 @@ class IpadDialog(QDialog):
         layout.setSpacing(10)
 
         # ヘッダー
-        title_label = QLabel("📱 iPad から手書き書き込み・リモート操作")
+        title_label = QLabel("📱 タブレットから手書き・リモート操作")
         title_font = QFont()
         title_font.setPointSize(15)
         title_font.setBold(True)
@@ -69,8 +69,8 @@ class IpadDialog(QDialog):
         layout.addWidget(title_label)
 
         desc_label = QLabel(
-            "同じ Wi-Fi に接続した iPad の Safari から以下の URL を開いてください。\n"
-            "スライドを見ながら Apple Pencil で直接書き込みができます。"
+            "同じ Wi-Fi または同じ Tailnet のタブレットでURLを開いてください。\n"
+            "GalaxyのS Pen / iPadのApple Pencilで書き込めます。"
         )
         desc_label.setWordWrap(True)
         desc_label.setStyleSheet("color: #a0a0b0; font-size: 12px; line-height: 1.4;")
@@ -159,6 +159,11 @@ class IpadDialog(QDialog):
         combo_row.addWidget(self.interface_combo, 1)
         combo_row.addWidget(self.btn_refresh_net)
         net_box.addLayout(combo_row)
+        network_hint = QLabel("Tailnet経由では「Tailscale / Tailnet」のアドレスを選択。\n"
+                              "192.168… や .local は同じLAN向けです。")
+        network_hint.setWordWrap(True)
+        network_hint.setStyleSheet("color: #a0a0b0; font-size: 12px;")
+        net_box.addWidget(network_hint)
         card_layout.addLayout(net_box)
 
         self.current_host = ""
@@ -171,6 +176,10 @@ class IpadDialog(QDialog):
         self.url_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.url_label.setStyleSheet("color: #38bdf8; padding: 2px;")
         card_layout.addWidget(self.url_label)
+        self.access_note = QLabel()
+        self.access_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.access_note.setStyleSheet("color: #a0a0b0; font-size: 12px;")
+        card_layout.addWidget(self.access_note)
 
         # インターフェース一覧をセット
         self._populate_interfaces()
@@ -234,6 +243,7 @@ class IpadDialog(QDialog):
             passcode_box.addWidget(lbl_pass_title)
             passcode_box.addWidget(self.passcode_input)
             passcode_box.addWidget(self.btn_refresh)
+            self.passcode_widgets = (lbl_pass_title, self.passcode_input, self.btn_refresh)
 
             card_layout.addLayout(passcode_box)
 
@@ -242,7 +252,7 @@ class IpadDialog(QDialog):
         btn_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.btn_copy = QPushButton("📋 URLをコピー")
-        self.btn_copy.setToolTip("パスコード付きURLをコピー")
+        self.btn_copy.setToolTip("接続用URLをコピー")
         self.btn_copy.clicked.connect(self._copy_url)
         btn_layout.addWidget(self.btn_copy)
 
@@ -335,7 +345,13 @@ class IpadDialog(QDialog):
 
     def _update_urls(self):
         self.base_url = f"http://{self.current_host}:{self.http_port}"
-        self.auth_url = f"{self.base_url}/?code={self.passcode}" if self.passcode else self.base_url
+        passwordless = bool(self.server and self.server.is_passwordless_host(self.current_host))
+        self.auth_url = f"{self.base_url}/?code={self.passcode}" if self.passcode and not passwordless else self.base_url + "/"
+        for widget in getattr(self, "passcode_widgets", ()):
+            widget.setVisible(not passwordless)
+        if hasattr(self, "access_note"):
+            self.access_note.setText("Tailnet / このPC：パスコード入力なしで開けます" if passwordless
+                                     else "LAN接続：パスコード付きQRコードで開けます")
         if hasattr(self, "url_label"):
             self.url_label.setText(self.base_url)
         self._load_qr_code()
@@ -416,7 +432,7 @@ class IpadDialog(QDialog):
         painter.drawText(
             pixmap.rect().adjusted(6, 6, -6, -6),
             Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
-            f"iPad Safari で\n開いてください:\n\n{self.base_url}"
+            f"タブレットで\n開いてください:\n\n{self.base_url}"
         )
         painter.end()
         self.qr_label.setPixmap(pixmap)
@@ -424,7 +440,7 @@ class IpadDialog(QDialog):
     def update_client_count(self, count: int):
         if count > 0:
             self.status_icon.setStyleSheet("color: #10b981; font-size: 12px;")
-            self.status_text.setText(f"iPad 接続中: {count} 台")
+            self.status_text.setText(f"タブレット接続中: {count} 台")
             self.status_text.setStyleSheet("color: #10b981; font-size: 13px; font-weight: bold;")
         else:
             self.status_icon.setStyleSheet("color: #f43f5e; font-size: 12px;")

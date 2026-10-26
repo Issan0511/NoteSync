@@ -1,4 +1,5 @@
 import os
+import uuid
 from PySide6.QtCore import Qt, QTimer, QTime, QEvent, QByteArray, QBuffer, QIODevice, QDateTime, QPointF
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
@@ -15,6 +16,7 @@ from beamerplus.NotePanel import NotePanel
 from beamerplus.Viewer import Viewer
 from beamerplus.WebServer import WebServer, WebBridge
 from beamerplus.IpadDialog import IpadDialog
+from beamerplus.AssistantSettings import AssistantSettings
 
 
 class MainWindow(QMainWindow):
@@ -32,6 +34,7 @@ class MainWindow(QMainWindow):
             self.viewer.connect_controller(self.controller)
 
         self.pdf_reader: PdfReader | None = None
+        self._document_id = uuid.uuid4().hex
         self.render_dpi: int = 400  # デフォルト: 4K 超高精細 (400 DPI)
 
         # プレゼンタイマー
@@ -201,10 +204,13 @@ class MainWindow(QMainWindow):
 
         # ツールメニュー
         tool_menu = menu_bar.addMenu("ツール(&T)")
-        act_ipad = QAction("📱 iPad / タブレット連携(&I)...", self)
-        act_ipad.setToolTip("iPad のブラウザから Apple Pencil で手書き描画するための接続情報を表示")
+        act_ipad = QAction("📱 タブレット連携(&I)...", self)
+        act_ipad.setToolTip("S Pen / Apple Pencilで手書きするための接続情報を表示")
         act_ipad.triggered.connect(self.show_ipad_dialog)
         tool_menu.addAction(act_ipad)
+        act_ai = QAction("✦ Claude設定...", self)
+        act_ai.triggered.connect(self.show_ai_settings)
+        tool_menu.addAction(act_ai)
 
         # 上部ツールバー
         self.main_toolbar = QToolBar("メインツールバー")
@@ -282,11 +288,16 @@ class MainWindow(QMainWindow):
         self.main_toolbar.addSeparator()
 
         # iPad連携ボタン
-        self.btn_ipad_connect = QPushButton("📱 iPad 連携")
+        self.btn_ipad_connect = QPushButton("📱 タブレット連携")
         self.btn_ipad_connect.setStyleSheet(self._tb_btn_style())
-        self.btn_ipad_connect.setToolTip("iPad のブラウザから Apple Pencil で手書き描画するための接続情報を表示")
+        self.btn_ipad_connect.setToolTip("S Pen / Apple Pencilで手書きするための接続情報を表示")
         self.btn_ipad_connect.clicked.connect(self.show_ipad_dialog)
         self.main_toolbar.addWidget(self.btn_ipad_connect)
+        btn_ai = QPushButton("✦ Claude設定")
+        btn_ai.setStyleSheet(self._tb_btn_style())
+        btn_ai.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        btn_ai.clicked.connect(self.show_ai_settings)
+        self.main_toolbar.addWidget(btn_ai)
 
         # ツールバーの全ボタンからフォーカスを外す（クリック後に矢印キーが吸われないようにする）
         for btn in (
@@ -301,6 +312,15 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app:
             app.installEventFilter(self)
+
+    def show_ai_settings(self):
+        dialog = AssistantSettings(self.web_server.assistant.model, self)
+        if dialog.exec() == AssistantSettings.DialogCode.Accepted:
+            self.web_server.assistant.model = dialog.model_input.text().strip()
+            self.web_server.broadcast({
+                "type": "ai_status", "configured": self.web_server.assistant.configured,
+                "model": self.web_server.assistant.model,
+            })
 
     def _tb_btn_style(self) -> str:
         return (
@@ -411,6 +431,7 @@ class MainWindow(QMainWindow):
     def load_pdf(self, path: str):
         try:
             self.pdf_reader = PdfReader(path)
+            self._document_id = uuid.uuid4().hex
             self.controller.set_total_pages(len(self.pdf_reader))
             self.note_panel.set_pdf_reader(self.pdf_reader)
             self.thumbnail_bar.load_pdf(self.pdf_reader)
@@ -695,6 +716,7 @@ class MainWindow(QMainWindow):
                 "points": s.points
             })
         return {
+            "documentId": self._document_id,
             "currentPage": self.controller.current_page,
             "totalPages": self.controller.total_pages,
             "currentTool": self.controller.current_tool,
@@ -725,7 +747,7 @@ class MainWindow(QMainWindow):
             size = data.get("size", 5)
             width_ratio = float(size) * 0.001
 
-        opacity = self.controller.highlighter_opacity if tool == "highlighter" else self.controller.pen_opacity
+        opacity = max(0.05, min(1.0, float(data.get('opacity', self.controller.highlighter_opacity if tool == "highlighter" else self.controller.pen_opacity))))
 
         # PC側の current_tool や is_line_mode などの選択状態は一切変えずに直接ストロークを開始
         self.controller.begin_custom_stroke(
@@ -734,7 +756,8 @@ class MainWindow(QMainWindow):
             opacity=opacity,
             norm_x=float(data["normX"]),
             norm_y=float(data["normY"]),
-            pressure=1.0
+            pressure=max(0.0, min(1.0, float(data.get('pressure', 1.0)))),
+            brush=data.get('brush', 'highlighter' if tool == 'highlighter' else 'pen') if data.get('brush', 'pen') in ('pen', 'fountain', 'pencil', 'highlighter') else 'pen'
         )
 
     def _on_web_stroke_moved(self, data: dict):
@@ -742,7 +765,7 @@ class MainWindow(QMainWindow):
         self.controller.add_stroke_point(
             data["normX"],
             data["normY"],
-            pressure=1.0  # 筆圧検知は無効化
+            pressure=max(0.0, min(1.0, float(data.get('pressure', 1.0))))
         )
 
     def _on_web_stroke_ended(self):
@@ -835,12 +858,12 @@ class MainWindow(QMainWindow):
     def _on_web_client_count_changed(self, count: int):
         if hasattr(self, "btn_ipad_connect"):
             if count > 0:
-                self.btn_ipad_connect.setText(f"📱 iPad ({count})")
+                self.btn_ipad_connect.setText(f"📱 タブレット ({count})")
                 self.btn_ipad_connect.setStyleSheet(
                     "QPushButton { background-color: #065f46; color: #34d399; border: 1px solid #059669; border-radius: 3px; padding: 4px 10px; font-size: 12px; font-weight: bold; }"
                 )
             else:
-                self.btn_ipad_connect.setText("📱 iPad 連携")
+                self.btn_ipad_connect.setText("📱 タブレット連携")
                 self.btn_ipad_connect.setStyleSheet(self._tb_btn_style())
 
     def _sync_web_page_changed(self, index: int):

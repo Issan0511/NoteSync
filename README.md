@@ -1,246 +1,62 @@
-# BeamerPlus
+# BeamerPlus Notes
 
-LaTeX / Beamer 等の PDF スライドによるプレゼンテーションを快適に行うための、デュアルスクリーン対応・発表者ビューツールです。
+GalaxyのS Penで書き、Claude Sonnetと考えるための手書きノートです。PC側で保存とClaude API接続を行い、タブレットはブラウザで使います。起動時はノート専用の画面になり、スライド・発表・プロジェクタ操作は表示しません。
 
----
-
-## 主な機能
-
-- **デュアルスクリーン対応**:
-  - プロジェクタ/外部ディスプレイに自動全画面表示する「Viewer」と、手元でノートやタイマーを確認できる「発表者ビュー」が完全同期。
-- **iPad / タブレット連携 (Web リモート手書き)**:
-  - 専用アプリ不要！同じ Wi-Fi 内の iPad の Safari から開くだけで、スライドを見ながら Apple Pencil で手書き書き込みが可能。
-  - Apple Pencil の筆圧感知、パームリジェクション（Pencilのみ描画）、指スワイプでのページめくりに対応。
-  - レーザーポインタ、蛍光ペン、消しゴム、Undo/Clear も iPad 上からフル操作でき、PC & プロジェクタ画面へリアルタイム同期。
-- **手書き描画 & テキスト書き込み**:
-  - キーボード入力による任意位置へのテキスト注釈書き込み（フォントサイズ・文字色変更、Return確定、Escキャンセル）。
-  - レーザーポインタ、手書きペン、蛍光ペン（半透明ハイライト）。
-  - Wacom や液晶タブレットの筆圧検知・ホバーインジケータ・ペン尻消しゴム自動認識。
-  - 水平・垂直 ±5度 スナップ対応の「直線描画」モード。
-  - 手書きストロークとテキストを時系列で正確に取り消せる統合 Undo 機能。
-- **消しゴム機能**:
-  - なぞった部分のみを切り取る「通常消しゴム」と、ストローク全体を消去する「オブジェクト消しゴム」のワンクリック切り替え。
-- **Markdown スライドノート**:
-  - ページごとに Markdown 形式で発表原稿やメモを記述・プレビュー可能。
-  - スライド PDF と同じディレクトリに JSON ファイルとして自動保存。
-- **プレゼンテーションタイマー & 画面暗転**:
-  - 経過時間タイマー（開始・一時停止・リセット）。
-  - `B` キーまたはボタンで瞬時にプロジェクタ画面をブラックアウトする暗転機能。
-
----
-
-## インストール方法
-
-### 1. pipx のインストール（初回のみ）
-
-`pipx` は Python アプリケーションをシステム環境から隔離して安全にグローバルコマンドとして管理できるツールです。まだインストールしていない場合は、お使いの OS に応じてインストールし、パスを通してください。
-
-#### 🐧 Linux (Ubuntu, Debian, Fedora, Arch 等)
-- **Ubuntu / Debian**:
-  ```bash
-  sudo apt update
-  sudo apt install pipx
-  pipx ensurepath
-  ```
-- **Fedora**:
-  ```bash
-  sudo dnf install pipx
-  pipx ensurepath
-  ```
-- **Arch Linux**:
-  ```bash
-  sudo pacman -S python-pipx
-  pipx ensurepath
-  ```
-
-#### 🍎 macOS
-Homebrew を使用してインストールします：
-```bash
-brew install pipx
-pipx ensurepath
-```
-
-#### 🪟 Windows
-PowerShell または コマンドプロンプトからインストールします：
-```powershell
-python -m pip install --user pipx
-python -m pipx ensurepath
-```
-*(Python ランチャー環境では `py -m pip install --user pipx` および `py -m pipx ensurepath`)*
-
-※ Scoop を利用する場合:
-```powershell
-scoop install pipx
-pipx ensurepath
-```
-
-> [!NOTE]
-> `pipx ensurepath` を実行した後は、環境変数の変更を反映するために**ターミナル（シェルやコマンドプロンプト）を再起動**してください。
-
----
-
-### 2. BeamerPlus のインストール
-
-#### pipx を使う場合（推奨）
-Python アプリケーションをシステム環境から隔離してグローバルコマンドとしてインストールできます。
+## 起動
 
 ```bash
-pipx install git+https://github.com/HaruhiroObora/BeamerPlus.git
+python3 -m venv .venv
+.venv/bin/pip install -e .
+.venv/bin/python -m beamerplus.main
 ```
 
-#### pip を使う場合
+PCの「タブレット接続 · QR」を開き、タブレットでQRコードを読み取ってください。PCとタブレットを同じTailnetに入れると、Tailscaleの接続先を優先します。Tailscaleで確認できた端末とこのPCではパスコード入力は不要です。PCのTailnetアドレスとポートが同じなら、再起動後も同じURLを使えます。通常のLAN接続ではパスコード付きURLを使います。
+
+## Galaxyでの操作
+
+S Penボタンは **Samsung Internet** で使用してください。Galaxy Tab S9から実測したイベントに合わせ、空中のボタンとペン先の接触を区別します。Chromeではボタンを押したときに描画イベントが届かなくなる場合があります。Galaxyのエアコマンドが開く場合は、S Pen設定で「ペンボタンでエアコマンドを開く」を無効にしてください。
+
+- **ボタンを押しながらなぞる**：一時的に消しゴム。離すと元のペンに戻ります。
+- **ペン先を近づけ、ボタンを短く2回押して離す**：円形のお気に入りパレット。使いたいペンをタップして選択します。右の星ボタンでも開けます。
+- **右のペンボタンをもう一度押す**：ペン設定。ボールペン・万年筆・鉛筆・蛍光ペン、色、太さ、濃さを選べます。万年筆は筆圧に応じて太さが変わります。
+- **お気に入りに追加**：ペンの種類・色・太さ・濃さを最大6本保存できます。設定画面で削除・入れ替えできます。
+- **消しゴムをもう一度押す**：「触れた部分」と「ストローク全体」を選べます。S Penボタンも同じ設定を使います。
+- **戻す／やり直す**：筆記、部分消去、線全体の消去、全消去を戻せます。一度なぞった消去をまとめて戻します。
+- **左上の矢印**：ノート一覧。新しいノートの作成と切り替えができます。
+- **ノート名をタップ**：名前を変更できます。
+- **右上の設定**：白紙・横罫線・方眼、S Penのボタン動作、画像として保存などを選べます。
+
+お気に入りとペン設定は、そのブラウザのローカルストレージに保存します。
+
+## ノートの保存
+
+筆跡とノート名・用紙設定はPCへ自動保存します。保存先はQtのアプリデータフォルダ内の `BeamerPlus Notes/notebooks.json` です。Linuxでは通常 `~/.local/share/BeamerPlus Notes/notebooks.json` になります。`BEAMERPLUS_NOTEBOOK_PATH` で保存先を指定することもできます。バックアップにはこのJSONをコピーしてください。APIキーはこのファイルに含めません。
+
+筆記中の接続先PCが必要です。右上に再接続中と表示された場合は、接続が戻ってから書いてください。
+
+## Claudeに質問
+
+PCの「Claude設定」でAnthropicのAPIキーを入力します。標準モデルは `claude-sonnet-5-5` です。`ANTHROPIC_API_KEY` と `BEAMERPLUS_CLAUDE_MODEL` でも設定できます。
+
+タブレットの「Claudeに聞く」を開くと、今のノート画像を添えて質問できます。同じノートでは会話を続けられます。APIキーはPCのプロセス内で使用し、ブラウザやノートの保存ファイルには渡しません。GUIから入力したキーはアプリを終了すると失われるため、再起動時には再入力してください。
+
+## 入力の確認
+
+ボタンが反応しない場合は、別ターミナルで以下を起動します。
+
 ```bash
-pip install git+https://github.com/HaruhiroObora/BeamerPlus.git
+.venv/bin/python -m beamerplus.PenDiagnostics
 ```
 
----
+タブレットで `http://PCのTailnetアドレス:8081/` を開くと入力を確認できます。ノートの再起動は不要です。診断ページはこのPCとTailscaleで確認できた端末からのみ使え、ボタン・接触の情報をメモリに保持します。筆跡・座標・キー入力・APIキーは収集しません。診断後は起動したターミナルで `Ctrl+C` を押して終了してください。
 
-## アップデート方法
-
-最新バージョンにアップデートする手順です。
-
-### pipx を使う場合（推奨）
+## 確認用テスト
 
 ```bash
-pipx upgrade beamerplus
+.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+node tests/tablet_input.test.mjs
 ```
-
-### pip を使う場合
-
-```bash
-pip install --upgrade beamerplus
-```
-
----
-
-## 使い方
-
-ターミナルからスライド PDF を指定して起動します：
-
-```bash
-beamerplus slides.pdf
-```
-
-引数を省略して起動し、ツールバーの「📁 開く」から PDF を選択することもできます：
-
-```bash
-beamerplus
-```
-
-### 主なショートカットキー
-| キー | 操作 |
-| :--- | :--- |
-| `◀` / `▶` / `PageUp` / `PageDown` | ページ送り / 戻し |
-| `B` | 画面の暗転（ブラックアウト）のトグル |
-| `F5` | プロジェクタ画面（Viewer）の表示 / 非表示 |
-| `F11` | プロジェクタ画面の全画面表示切替 |
-| `Ctrl + N` (`Cmd + N`) | ノートパネルの表示 / 非表示 |
-| `Ctrl + T` (`Cmd + T`) | 下部スライド一覧サムネイルの表示 / 非表示 |
-
----
-
-### 📱 iPad / タブレットから書き込む方法
-1. BeamerPlus を起動し、ツールバーの「**📱 iPad 連携**」ボタン（またはメニューの「ツール」→「iPad / タブレット連携」）をクリックします。
-2. 表示されるダイアログの **QR コードを iPad の標準カメラで読み取るだけ**（または Safari で記載の URL を開く）で即座に接続されます。
-   - ※ 複数のネットワーク（Wi-Fi、有線LAN、テザリングなど）がある場合は、ダイアログ上部のドロップダウンから接続したい IP アドレスやデバイス名（`.local` ドメイン）を選択して切り替えることができます。
-3. iPad の画面に現在表示中のスライドが表示されます：
-   - **Apple Pencil**: スライド上に手書き描画（安定した均一な線幅描画）。
-   - **完全な色選択（カラーピッカー）**: カラープレビューアイコンをタップすると、iOS 標準のカラーピッカー（カラーホイール、RGBスライダー、HEX指定等）が開き、自由な色を選択可能。
-   - **線の太さ調整**: iPad のツールバーにある太さスライダーで線の太さを自由に変更でき、PC側の設定とリアルタイムに双方向同期。
-   - **指スワイプ**: 「Pencilのみ描画」が ON の場合、画面を左右にスワイプしてスライドのページめくりができます。
-   - **ツールバー**: 蛍光ペン、消しゴム、レーザーポインタ、Undo、クリア等の操作が iPad 側からも自由に行えます。
-   - iPad 上で描いた内容は、手元の PC 画面およびプロジェクタ画面（Viewer）へリアルタイムに同期されます。
-
----
-
-## デスクトップショートカットの追加
-
-ターミナルを開かずにアイコンのダブルクリックや、PDF ファイルのドラッグ＆ドロップから起動できるように、各 OS でデスクトップショートカットを作成できます。
-
-### 🐧 Linux (Ubuntu, Debian, Fedora, Arch 等)
-
-デスクトップエントリーファイル（`.desktop`）を作成することで、アプリメニューやデスクトップからワンクリックで起動できるようになります。
-
-1. **エントリーファイルの作成**:
-   ターミナルで以下のコマンドを実行します：
-   ```bash
-   mkdir -p ~/.local/share/applications
-   cat << 'EOF' > ~/.local/share/applications/beamerplus.desktop
-   [Desktop Entry]
-   Version=1.0
-   Type=Application
-   Name=BeamerPlus
-   Comment=LaTeX/Beamer PDF Presenter View
-   Exec=beamerplus %f
-   Icon=x-office-presentation
-   Terminal=false
-   Categories=Office;Presentation;
-   MimeType=application/pdf;
-   EOF
-   ```
-2. **デスクトップにアイコンを置く場合**:
-   ```bash
-   cp ~/.local/share/applications/beamerplus.desktop ~/Desktop/
-   chmod +x ~/Desktop/beamerplus.desktop
-   ```
-   ※ Ubuntu (GNOME) の場合、デスクトップに置いたアイコンを右クリックし、「**起動を許可する (Allow Launching)**」を選択してください。
-3. **右クリックから開く**:
-   PDF ファイルを右クリック →「別のアプリケーションで開く」から `BeamerPlus` を選択して開くことも可能になります。
-
----
-
-### 🍎 macOS
-
-macOS 標準アプリ「Automator」を使って、PDF のドラッグ＆ドロップにも対応したアプリ（`.app`）を作成できます。
-
-1. **Automator を起動**:
-   - `Spotlight`（`Cmd + Space`）で「Automator」と入力して開きます。
-2. **書類の種類を選択**:
-   - 「新規書類」から「**アプリケーション**」を選択して「選択」をクリックします。
-3. **シェルスクリプトを追加**:
-   - 左側ライブラリの「ユーティリティ」から「**シェルスクリプトを実行**」を右側のワークフロー領域にドラッグ＆ドロップします。
-   - **入力の引き渡し方法** を「**引数として**」に変更します。
-   - スクリプト入力欄に以下を記述します：
-     ```bash
-     export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
-     if [ $# -eq 0 ]; then
-         beamerplus
-     else
-         beamerplus "$1"
-     fi
-     ```
-4. **保存**:
-   - `Cmd + S` を押し、名前を `BeamerPlus`、保存先を「アプリケーション」フォルダ（またはデスクトップ）にして保存します。
-5. **使い方**:
-   - アイコンをダブルクリックで起動できるほか、PDF ファイルをこのアイコンに **ドラッグ＆ドロップ** して直接開くこともできます。
-
----
-
-### 🪟 Windows (Windows 10 / 11)
-
-Windows 標準のショートカット機能で簡単に作成できます。
-
-1. **ショートカット作成ウィザード**:
-   - デスクトップの何もない場所で **右クリック →「新規作成」→「ショートカット」** を選択します。
-2. **コマンドの指定**:
-   - 「項目の場所を入力してください」に以下を入力して「次へ」をクリックします：
-     - **pipx でインストールした場合**:
-       ```text
-       %USERPROFILE%\.local\bin\beamerplus.exe
-       ```
-     - **pip でインストールした場合**:
-       ```text
-       python -m beamerplus.main
-       ```
-3. **名前の指定**:
-   - ショートカットの名前を「`BeamerPlus`」にして「完了」をクリックします。
-4. **アイコンの変更（お好みで）**:
-   - 作成されたショートカットを右クリック →「プロパティ」を開きます。
-   - 「ショートカット」タブの「アイコンの変更」から、お好みのアイコンを選択して「OK」をクリックします。
-5. **便利な使い方**:
-   - スライド PDF ファイルをこのデスクトップアイコン上に **ドラッグ＆ドロップ** すると、該当スライドを直接開いて起動できます。
-
----
 
 ## ライセンス
-MIT License
+
+MIT License。HaruhiroOboraさんの [BeamerPlus](https://github.com/HaruhiroObora/BeamerPlus) を元に、S PenとClaudeを使うノートとして拡張しています。元の著作権表示は [LICENSE](LICENSE) に保持しています。

@@ -7,7 +7,7 @@ from PySide6.QtGui import (
     QPointingDevice, QColor, QPen, QPainterPath, QRadialGradient, QBrush, QFont
 )
 
-from beamerplus.DrawingModel import PresentationController, Stroke, TextItem, create_smooth_path
+from beamerplus.DrawingModel import PresentationController, Stroke, TextItem, create_smooth_path, paint_ink
 
 
 class SlideCanvas(QWidget):
@@ -595,24 +595,7 @@ class SlideCanvas(QWidget):
         if self.controller.is_sketch_visible:
             strokes = self.controller.get_strokes_for_page(self.controller.current_page)
             for stroke in strokes:
-                if not stroke.points:
-                    continue
-                color = QColor(stroke.color)
-                color.setAlphaF(stroke.opacity)
-                pen_w = max(1.5, base_dim * stroke.width_ratio)
-                pen = QPen(color, pen_w, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-                painter.setPen(pen)
-
-                if len(stroke.points) == 1:
-                    painter.setBrush(QBrush(color))
-                    p0x = rect.left() + stroke.points[0][0] * rect.width()
-                    p0y = rect.top() + stroke.points[0][1] * rect.height()
-                    painter.drawEllipse(QPointF(p0x, p0y), pen_w / 2.0, pen_w / 2.0)
-                    continue
-
-                path = create_smooth_path(stroke.points, rect.left(), rect.top(), rect.width(), rect.height())
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawPath(path)
+                paint_ink(painter, stroke, rect)
 
             # テキスト描画
             texts = self.controller.get_texts_for_page(self.controller.current_page)

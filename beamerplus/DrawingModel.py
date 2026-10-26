@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
 import math
 from PySide6.QtCore import QObject, Signal, Qt
-from PySide6.QtGui import QColor, QPainterPath
+from PySide6.QtGui import QColor, QPainterPath, QPen, QBrush
+from PySide6.QtCore import QPointF
 
 
 @dataclass
@@ -11,6 +12,31 @@ class Stroke:
     opacity: float = 0.85
     # (norm_x, norm_y, pressure): pressure は 0.0 ~ 1.0 (マウス時は1.0)
     points: list[tuple[float, float, float]] = field(default_factory=list)
+    brush: str = 'pen'
+
+
+def paint_ink(painter, stroke, rect):
+    if not stroke.points:
+        return
+    color = QColor(stroke.color)
+    color.setAlphaF(max(0, min(1, stroke.opacity)))
+    width = max(0.8, min(rect.width(), rect.height()) * stroke.width_ratio)
+    cap = Qt.PenCapStyle.FlatCap if stroke.brush == 'highlighter' else Qt.PenCapStyle.RoundCap
+    painter.setPen(QPen(color, width, Qt.PenStyle.SolidLine, cap, Qt.PenJoinStyle.RoundJoin))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    if len(stroke.points) == 1:
+        point = stroke.points[0]
+        painter.setBrush(QBrush(color))
+        painter.drawEllipse(QPointF(rect.left() + point[0] * rect.width(), rect.top() + point[1] * rect.height()), width / 2, width / 2)
+    elif stroke.brush == 'fountain':
+        for previous, point in zip(stroke.points, stroke.points[1:]):
+            pressure = (previous[2] + point[2]) / 2 if len(previous) > 2 and len(point) > 2 else 1
+            painter.setPen(QPen(color, width * (0.35 + 0.9 * pressure), Qt.PenStyle.SolidLine,
+                                Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+            painter.drawLine(QPointF(rect.left() + previous[0] * rect.width(), rect.top() + previous[1] * rect.height()),
+                             QPointF(rect.left() + point[0] * rect.width(), rect.top() + point[1] * rect.height()))
+    else:
+        painter.drawPath(create_smooth_path(stroke.points, rect.left(), rect.top(), rect.width(), rect.height()))
 
 
 def create_smooth_path(points: list[tuple[float, ...]], origin_x: float, origin_y: float, scale_w: float, scale_h: float) -> QPainterPath:
@@ -171,11 +197,11 @@ def clip_stroke_by_circle(stroke: Stroke, center: tuple[float, float], r: float,
                 current_points.append(sb)
             else:
                 if len(current_points) >= 2:
-                    result_strokes.append(Stroke(stroke.color, stroke.width_ratio, stroke.opacity, current_points))
+                    result_strokes.append(Stroke(stroke.color, stroke.width_ratio, stroke.opacity, current_points, stroke.brush))
                 current_points = []
 
     if len(current_points) >= 2:
-        result_strokes.append(Stroke(stroke.color, stroke.width_ratio, stroke.opacity, current_points))
+        result_strokes.append(Stroke(stroke.color, stroke.width_ratio, stroke.opacity, current_points, stroke.brush))
 
     return result_strokes
 
@@ -400,10 +426,11 @@ class PresentationController(QObject):
         opacity: float,
         norm_x: float,
         norm_y: float,
-        pressure: float = 1.0
+        pressure: float = 1.0,
+        brush: str = 'pen'
     ):
         """PC側の選択ツール（current_tool）や色・太さ設定を変更せずに直接ストロークを開始"""
-        stroke = Stroke(color=color, width_ratio=width_ratio, opacity=opacity, points=[(norm_x, norm_y, pressure)])
+        stroke = Stroke(color=color, width_ratio=width_ratio, opacity=opacity, points=[(norm_x, norm_y, pressure)], brush=brush)
         self.current_stroke = stroke
 
         if self.is_sketchbook:
