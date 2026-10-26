@@ -12,6 +12,7 @@ import tempfile
 import uuid
 
 from beamerplus.DrawingModel import PresentationController, Stroke
+from beamerplus.NotebookText import NoteText, prepare_text
 
 
 class InkEditConflict(ValueError):
@@ -82,6 +83,9 @@ class NotebookStore:
                     raise ValueError('ノート保存ファイルの形式を確認してください')
                 for stroke in note['strokes']:
                     Stroke(**stroke)
+                if not isinstance(note.get('texts', []), list):
+                    raise ValueError('ノートの文字データを確認してください')
+                note['texts'] = [asdict(prepare_text(item, note.get('aspect', 4 / 3))) for item in note.get('texts', [])]
             self.active_id = data.get('activeId')
         if not self.notes:
             self.new_note()
@@ -93,7 +97,7 @@ class NotebookStore:
         return next(note for note in self.notes if note['id'] == self.active_id)
 
     def new_note(self, title='新しいノート'):
-        note = {'id': uuid.uuid4().hex, 'title': title[:120], 'paper': 'plain', 'aspect': 4 / 3, 'strokes': []}
+        note = {'id': uuid.uuid4().hex, 'title': title[:120], 'paper': 'plain', 'aspect': 4 / 3, 'strokes': [], 'texts': []}
         self.notes.insert(0, note)
         self.active_id = note['id']
         return note
@@ -136,11 +140,14 @@ class NotebookController(PresentationController):
         self.undo_stack = []
         self.redo_stack = []
         self.pending_edit = None
+        self.pending_texts = None
+        self.undo_text_stack = []
+        self.redo_text_stack = []
         self.ink_revision = 0
         # Connect before a view/server attaches: every published mutation carries
         # its new revision, including changes while another pen is still down.
         for signal in (self.stroke_started, self.stroke_added_point, self.stroke_line_updated,
-                       self.strokes_updated, self.strokes_cleared):
+                       self.strokes_updated, self.strokes_cleared, self.texts_updated):
             signal.connect(self._advance_ink_revision)
 
     def _advance_ink_revision(self, *args):
@@ -152,13 +159,18 @@ class NotebookController(PresentationController):
     def begin_edit(self):
         if self.pending_edit is None:
             self.pending_edit = self.snapshot()
+            self.pending_texts = deepcopy(self.sketchbook_texts)
 
     def finish_edit(self):
-        if self.pending_edit is not None and self.pending_edit != self.sketchbook_strokes:
+        if self.pending_edit is not None and (self.pending_edit != self.sketchbook_strokes or self.pending_texts != self.sketchbook_texts):
             self.undo_stack.append(self.pending_edit)
             self.undo_stack = self.undo_stack[-40:]
+            self.undo_text_stack.append(self.pending_texts)
+            self.undo_text_stack = self.undo_text_stack[-40:]
             self.redo_stack.clear()
+            self.redo_text_stack.clear()
         self.pending_edit = None
+        self.pending_texts = None
         self.sketchbook_history = []
 
     def begin_custom_stroke(self, *args, **kwargs):
@@ -184,30 +196,65 @@ class NotebookController(PresentationController):
         self.end_stroke()
         if self.undo_stack:
             self.redo_stack.append(self.snapshot())
+            self.redo_text_stack.append(deepcopy(self.sketchbook_texts))
             self.sketchbook_strokes = self.undo_stack.pop()
+            self.sketchbook_texts = self.undo_text_stack.pop()
             self.sketchbook_history = []
+            self.texts_updated.emit(-1)
             self.strokes_updated.emit(-1)
 
     def redo(self):
         self.end_stroke()
         if self.redo_stack:
             self.undo_stack.append(self.snapshot())
+            self.undo_text_stack.append(deepcopy(self.sketchbook_texts))
             self.sketchbook_strokes = self.redo_stack.pop()
+            self.sketchbook_texts = self.redo_text_stack.pop()
             self.sketchbook_history = []
+            self.texts_updated.emit(-1)
             self.strokes_updated.emit(-1)
 
-    def load_ink(self, data):
+    def load_ink(self, data, texts=None):
         self.current_stroke = None
         self.pending_edit = None
+        self.pending_texts = None
         self.undo_stack.clear()
         self.redo_stack.clear()
+        self.undo_text_stack.clear()
+        self.redo_text_stack.clear()
         self.sketchbook_strokes = [Stroke(**stroke) for stroke in data]
-        self.sketchbook_texts = []
+        self.sketchbook_texts = [NoteText(**item) for item in (texts or [])]
         self.sketchbook_history = []
         self.strokes_updated.emit(-1)
 
     def serialized_ink(self):
         return [asdict(stroke) for stroke in self.sketchbook_strokes]
+
+    def serialized_texts(self):
+        return [asdict(item) for item in self.sketchbook_texts]
+
+    def add_note_text(self, data, aspect=4 / 3):
+        item = prepare_text(data, aspect)
+        if len(self.sketchbook_texts) >= 200:
+            raise ValueError('このノートの文字が多すぎます。不要な書き込みを消してください。')
+        if any(existing.id == item.id for existing in self.sketchbook_texts):
+            raise ValueError('この識別子の文字はすでに追加されています。')
+        self.end_stroke()
+        self.begin_edit()
+        self.sketchbook_texts.append(item)
+        self.finish_edit()
+        self.texts_updated.emit(-1)
+        return item
+
+    def remove_note_text(self, identifier):
+        remaining = [item for item in self.sketchbook_texts if item.id != identifier]
+        if remaining == self.sketchbook_texts:
+            raise ValueError('指定した文字が見つかりません。ノートを読み直してください。')
+        self.end_stroke()
+        self.begin_edit()
+        self.sketchbook_texts = remaining
+        self.finish_edit()
+        self.texts_updated.emit(-1)
 
     def apply_ink_edit(self, data):
         """Validate a selection edit completely, then commit it as one undo step.

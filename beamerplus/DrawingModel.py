@@ -89,6 +89,9 @@ def text_intersects_circle(item: TextItem, center: tuple[float, float], r: float
     w = max(0.01, len(item.text) * (h * 0.55) / aspect_ratio)
     x0, y0 = item.norm_x, item.norm_y
     x1, y1 = item.norm_x + w, item.norm_y + h
+    if hasattr(item, 'bounds'):
+        bounds = item.bounds(aspect_ratio)
+        x1, y1 = x0 + bounds['width'], y0 + bounds['height']
 
     cx, cy = center
     closest_x = max(x0, min(cx, x1))

@@ -6,6 +6,7 @@ import threading
 import secrets
 import string
 import re
+import hashlib
 from typing import Callable
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -166,6 +167,7 @@ def get_network_interfaces() -> list[dict]:
 
 # --- iPad向け Web アプリケーション (HTML / CSS / JavaScript) ---
 HTML_CONTENT = NOTEBOOK_HTML
+CLIENT_BUILD = hashlib.sha256(HTML_CONTENT.encode()).hexdigest()[:16]
 
 
 # --- Qt シグナルブリッジ ---
@@ -231,6 +233,7 @@ class SlideRequestHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             content = HTML_CONTENT.replace("__WS_PORT__", str(SlideRequestHandler.ws_port))
             content = content.replace("__AUTO_AUTH__", "true" if self._passwordless() else "false")
+            content = content.replace("__CLIENT_BUILD__", CLIENT_BUILD)
             self.wfile.write(content.encode("utf-8"))
             return
 
@@ -384,7 +387,7 @@ class WebServer:
 
                                     await websocket.send(json.dumps({
                                         "type": "auth_result",
-                                        "success": True
+                                        "success": True, "clientBuild": CLIENT_BUILD
                                     }))
 
                                     # 初期状態送信
@@ -398,6 +401,11 @@ class WebServer:
                                         "type": "ai_status", "configured": self.assistant.configured,
                                         "model": self.assistant.model,
                                     }))
+                                    if not data.get('clientBuild'):
+                                        await websocket.send(json.dumps({
+                                            'type': 'note_error',
+                                            'message': '画面が更新されています。GPTの書き込み・数式を表示するには、タブレットのページを一度再読み込みしてください。',
+                                        }))
                                 else:
                                     await websocket.send(json.dumps({
                                         "type": "auth_result",

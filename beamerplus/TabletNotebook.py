@@ -8,6 +8,9 @@ from beamerplus.TabletFavorites import FAVORITES_SCRIPT, FAVORITES_STYLE
 from beamerplus.TabletEraserCursor import ERASER_CURSOR_SCRIPT
 from beamerplus.TabletLibrary import LIBRARY_SCRIPT, LIBRARY_STYLE
 from beamerplus.TabletMenus import MENUS_SCRIPT, MENUS_STYLE
+from beamerplus.NotebookText import NOTE_TEXT_SCRIPT
+from beamerplus.TabletText import INSTALL_TEXT_SCRIPT
+from beamerplus.TabletVersion import VERSION_SCRIPT
 
 
 ICONS = {
@@ -104,7 +107,7 @@ SCRIPT = r"""
     const activeCtx=activeCanvas.getContext('2d'),committedCtx=committedCanvas.getContext('2d');
     const btnPen=$('btn-pen'),btnHighlighter=$('btn-highlighter'),btnEraser=$('btn-eraser'),penOnlyToggle=$('penOnlyToggle'),penButtonModeSelect=$('pen-button-mode');
     let currentTool='pen',currentColor='#202124',selectedBrush='pen',isLineMode=false,isDrawing=false,isSketchbook=true,isSketchVisible=true;
-    let currentStrokePoints=[],sketchbookStrokes=[],slideStrokes=[],currentDocumentId='',currentPage=0,slideImageReady=true,isTrackingSwipe=false;
+    let currentStrokePoints=[],sketchbookStrokes=[],noteTexts=[],slideStrokes=[],currentDocumentId='',currentPage=0,slideImageReady=true,isTrackingSwipe=false;
     let eraserMode='stroke',toolSizes={pen:4,highlighter:22,eraser:18},toolOpacities={pen:1,highlighter:.3};
     let notebookReady=false,notes=[],paper='plain',paperAspect=4/3,selectedFavorite=-1,remoteStroke=null;
     const brushNames={pen:'ボールペン',fountain:'万年筆',pencil:'鉛筆',highlighter:'蛍光ペン'};
@@ -130,7 +133,8 @@ SCRIPT = r"""
         for(let i=1;i<points.length;i++){const a=points[i-1],b=points[i];ctx.lineWidth=width*(.35+.9*((a[2]??1)+(b[2]??1))/2);ctx.beginPath();ctx.moveTo(a[0]*w,a[1]*h);ctx.lineTo(b[0]*w,b[1]*h);ctx.stroke();}
       }else{ctx.beginPath();ctx.moveTo(points[0][0]*w,points[0][1]*h);for(let i=1;i<points.length-1;i++){const a=points[i],b=points[i+1];ctx.quadraticCurveTo(a[0]*w,a[1]*h,(a[0]+b[0])*w/2,(a[1]+b[1])*h/2);}const end=points.at(-1);ctx.lineTo(end[0]*w,end[1]*h);ctx.stroke();}ctx.restore();
     }
-    function renderAllStrokes(strokes){committedCtx.clearRect(0,0,committedCanvas.width,committedCanvas.height);for(const stroke of strokes)drawStroke(committedCtx,stroke);}
+    __NOTE_TEXT_SCRIPT__
+    function renderAllStrokes(strokes){committedCtx.clearRect(0,0,committedCanvas.width,committedCanvas.height);for(const stroke of strokes)drawStroke(committedCtx,stroke);drawNoteTexts(committedCtx,noteTexts,slideWrapper.clientWidth,slideWrapper.clientHeight);}
     function adjustLayout(){
       finishActiveInput();const r=stage.getBoundingClientRect(),width=Math.max(40,Math.min(r.width-44,(r.height-48)*paperAspect)),height=width/paperAspect;
       slideWrapper.style.setProperty('--paper-gap',`${height/24}px`);slideWrapper.style.width=`${width}px`;slideWrapper.style.height=`${height}px`;const dpr=window.devicePixelRatio||1;
@@ -207,14 +211,15 @@ SCRIPT = r"""
     let currentPasscode=urlParams.get('code')||'',ws=null,reconnectTimer;
     try{currentPasscode=currentPasscode||sessionStorage.getItem('beamerplus_passcode')||'';}catch(_){}
     function sendWS(message){if(notebookReady&&ws&&ws.readyState===WebSocket.OPEN){ws.send(JSON.stringify(message));if(['stroke_start','stroke_move','erase','clear','undo','redo'].includes(message.type))$('save-status').textContent='保存中…';return true;}if(!['stroke_end','erase_end'].includes(message.type))showToast('PCとの接続を待ってください');return false;}
-    function connectWS(){if(!autoAuth&&!currentPasscode){$('auth-overlay').style.display='flex';return;}clearTimeout(reconnectTimer);ws=new WebSocket(`ws://${location.hostname}:__WS_PORT__`);ws.onopen=()=>ws.send(JSON.stringify({type:'auth',passcode:currentPasscode}));ws.onclose=()=>{finishActiveInput();notebookReady=false;$('note-title').disabled=true;$('status-dot').classList.remove('online');$('save-status').textContent='再接続中';updateAssistantConnection(false);reconnectTimer=setTimeout(connectWS,2000);};ws.onerror=()=>ws.close();ws.onmessage=event=>{try{const msg=JSON.parse(event.data);if(msg.type==='auth_result'){if(msg.success){notebookReady=true;$('note-title').disabled=false;$('auth-overlay').style.display='none';$('status-dot').classList.add('online');$('save-status').textContent='保存済み';try{sessionStorage.setItem('beamerplus_passcode',currentPasscode);}catch(_){}updateAssistantConnection(true);}else{$('auth-overlay').style.display='flex';$('auth-error').textContent='パスコードを確認してください';}return;}handleServerMessage(msg);}catch(error){console.error(error);}};}
-    $('auth-form').addEventListener('submit',e=>{e.preventDefault();currentPasscode=$('passcode-input').value.trim();if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'auth',passcode:currentPasscode}));else connectWS();});
+    function connectWS(){if(!autoAuth&&!currentPasscode){$('auth-overlay').style.display='flex';return;}clearTimeout(reconnectTimer);ws=new WebSocket(`ws://${location.hostname}:__WS_PORT__`);ws.onopen=()=>ws.send(JSON.stringify({type:'auth',passcode:currentPasscode,clientBuild:notebookClientBuild}));ws.onclose=()=>{finishActiveInput();notebookReady=false;$('note-title').disabled=true;$('status-dot').classList.remove('online');$('save-status').textContent='再接続中';updateAssistantConnection(false);reconnectTimer=setTimeout(connectWS,2000);};ws.onerror=()=>ws.close();ws.onmessage=event=>{try{const msg=JSON.parse(event.data);if(msg.type==='auth_result'){if(msg.success){checkNotebookClientVersion(msg.clientBuild);notebookReady=true;$('note-title').disabled=false;$('auth-overlay').style.display='none';$('status-dot').classList.add('online');$('save-status').textContent='保存済み';try{sessionStorage.setItem('beamerplus_passcode',currentPasscode);}catch(_){}updateAssistantConnection(true);}else{$('auth-overlay').style.display='flex';$('auth-error').textContent='パスコードを確認してください';}return;}handleServerMessage(msg);}catch(error){console.error(error);}};}
+    $('auth-form').addEventListener('submit',e=>{e.preventDefault();currentPasscode=$('passcode-input').value.trim();if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'auth',passcode:currentPasscode,clientBuild:notebookClientBuild}));else connectWS();});
     function handleServerMessage(msg){
       if(msg.type.startsWith('ai_')){handleAssistantMessage(msg);return;}
       if(msg.type==='state_sync'){
-        finishActiveInput();const oldAspect=paperAspect;paperAspect=Number.isFinite(msg.paperAspect)&&msg.paperAspect>=.4&&msg.paperAspect<=2.5?msg.paperAspect:4/3;currentDocumentId=msg.documentId||'';sketchbookStrokes=msg.sketchbookStrokes||msg.strokes||[];notes=msg.notes||[];
+        finishActiveInput();const oldAspect=paperAspect;paperAspect=Number.isFinite(msg.paperAspect)&&msg.paperAspect>=.4&&msg.paperAspect<=2.5?msg.paperAspect:4/3;currentDocumentId=msg.documentId||'';sketchbookStrokes=msg.sketchbookStrokes||msg.strokes||[];noteTexts=msg.noteTexts||[];notes=msg.notes||[];
         if(document.activeElement!==$('note-title'))$('note-title').value=msg.title||'新しいノート';paper=msg.paper||'plain';slideWrapper.classList.toggle('ruled',paper==='ruled');slideWrapper.classList.toggle('grid',paper==='grid');$('paper-style').value=paper;$('note-footer').textContent={plain:'白紙のノート',ruled:'横罫線のノート',grid:'方眼のノート'}[paper];if(oldAspect!==paperAspect)adjustLayout();else renderAllStrokes(sketchbookStrokes);renderNotes();setHistory(msg);
-      }else if(['strokes_updated','stroke_undone'].includes(msg.type)){sketchbookStrokes=msg.strokes||[];renderAllStrokes(sketchbookStrokes);}
+      }else if(msg.type==='note_texts_updated'){if(msg.documentId===currentDocumentId){noteTexts=msg.texts||[];renderAllStrokes(sketchbookStrokes);}}
+      else if(['strokes_updated','stroke_undone'].includes(msg.type)){sketchbookStrokes=msg.strokes||[];renderAllStrokes(sketchbookStrokes);}
       else if(msg.type==='strokes_cleared'){sketchbookStrokes=[];renderAllStrokes([]);}
       else if(msg.type==='note_history')setHistory(msg);
       else if(msg.type==='note_saved'){$('save-status').textContent='保存済み';}
@@ -227,16 +232,20 @@ SCRIPT = r"""
     __ASSISTANT_SCRIPT__
     __NAVIGATION_SCRIPT__
     __SELECTION_SCRIPT__
+    __INSTALL_TEXT_SCRIPT__
     __FAVORITES_SCRIPT__
     __ERASER_CURSOR_SCRIPT__
     __LIBRARY_SCRIPT__
     __MENUS_SCRIPT__
+    __VERSION_SCRIPT__
     updatePenUI();setHistory({canUndo:false,canRedo:false});adjustLayout();connectWS();
     window.addEventListener('resize',adjustLayout);window.visualViewport?.addEventListener('resize',adjustLayout);
 """
 
 NOTEBOOK_HTML = (f'<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>BeamerPlus Notes</title><style>{ASSISTANT_STYLE}{STYLE}{NAVIGATION_STYLE}{SELECTION_STYLE}{FAVORITES_STYLE}{LIBRARY_STYLE}{MENUS_STYLE}</style></head><body>{MARKUP}{ASSISTANT_MARKUP}<script>'
-                 + SCRIPT.replace('__INPUT_SCRIPT__', INPUT_SCRIPT).replace('__ASSISTANT_SCRIPT__', ASSISTANT_SCRIPT)
+                 + SCRIPT.replace('__INPUT_SCRIPT__', INPUT_SCRIPT).replace('__ASSISTANT_SCRIPT__', ASSISTANT_SCRIPT).replace('__NOTE_TEXT_SCRIPT__', NOTE_TEXT_SCRIPT)
                  .replace('__NAVIGATION_SCRIPT__', NAVIGATION_SCRIPT).replace('__SELECTION_SCRIPT__', SELECTION_SCRIPT)
+                 .replace('__INSTALL_TEXT_SCRIPT__', INSTALL_TEXT_SCRIPT)
                  .replace('__FAVORITES_SCRIPT__', FAVORITES_SCRIPT).replace('__ERASER_CURSOR_SCRIPT__', ERASER_CURSOR_SCRIPT)
-                 .replace('__LIBRARY_SCRIPT__', LIBRARY_SCRIPT).replace('__MENUS_SCRIPT__', MENUS_SCRIPT) + '</script></body></html>')
+                 .replace('__LIBRARY_SCRIPT__', LIBRARY_SCRIPT).replace('__MENUS_SCRIPT__', MENUS_SCRIPT)
+                 .replace('__VERSION_SCRIPT__', VERSION_SCRIPT) + '</script></body></html>')

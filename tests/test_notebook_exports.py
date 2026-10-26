@@ -55,7 +55,8 @@ class NotebookExportTests(unittest.TestCase):
                 self.assertEqual(before[field], after[field])
             self.assertNotEqual(before['id'], after['id'])
             self.assertNotEqual(before['texts'][0]['id'], after['texts'][0]['id'])
-            self.assertEqual({k: v for k, v in before['texts'][0].items() if k != 'id'},
+            self.assertEqual({**{k: v for k, v in before['texts'][0].items() if k != 'id'},
+                              'format': before['texts'][0].get('format', 'auto')},
                              {k: v for k, v in after['texts'][0].items() if k != 'id'})
         self.assertEqual(notes, source)
 

@@ -134,7 +134,7 @@ def _notes(data):
                 raise ValueError('ノートの文字データが正しくありません。')
             # Whitelisting prevents auxiliary API/MCP fields and private paths
             # from leaking into exported JSON even if a caller supplies them.
-            allowed = {key: raw_text[key] for key in ('id', 'text', 'norm_x', 'norm_y', 'size', 'color') if key in raw_text}
+            allowed = {key: raw_text[key] for key in ('id', 'text', 'norm_x', 'norm_y', 'size', 'color', 'format') if key in raw_text}
             try:
                 note['texts'].append(asdict(_prepare_text(allowed, aspect)))
             except (TypeError, OverflowError) as exc:

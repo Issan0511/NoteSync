@@ -14,10 +14,16 @@ dependencies = [
     "websockets>=12.0",
     "qrcode>=7.0",
     "pillow>=9.0",
+    "ziamath>=0.13,<0.14",
+    "latex2mathml>=3.81,<4",
 ]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.26,<2"]
 
 [project.scripts]
 beamerplus = "beamerplus.main:main"
+beamerplus-mcp = "beamerplus.NotebookMCP:main"
 
 [project.gui-scripts]
 beamerplus-gui = "beamerplus.main:main"

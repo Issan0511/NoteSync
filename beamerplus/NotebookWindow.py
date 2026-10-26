@@ -1,12 +1,15 @@
 """Notebook-only desktop host for the tablet, ink storage, and Claude settings."""
 
 from dataclasses import asdict
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+import uuid
 
-from PySide6.QtCore import Qt, QTimer, QStandardPaths, QRectF, QPointF
+from PySide6.QtCore import Qt, QTimer, QStandardPaths, QRectF, QPointF, QByteArray, QBuffer, QIODevice
 from PySide6.QtGui import QAction, QKeySequence, QPixmap, QPainter, QColor, QPen
 from PySide6.QtWidgets import QMainWindow, QToolBar, QPushButton, QLabel, QFileDialog, QMessageBox
 
@@ -14,6 +17,8 @@ from beamerplus.MainWindow import MainWindow
 from beamerplus.NotebookModel import NotebookController, NotebookStore
 from beamerplus.NotebookLibrary import NotebookLibraryMixin
 from beamerplus.NotebookFiles import NotebookFilesMixin
+from beamerplus.NotebookText import annotation_payload, paint_note_texts, text_bounds
+from beamerplus.NotebookBridge import NotebookBridge
 from beamerplus.SlideCanvas import SlideCanvas
 from beamerplus.DrawingModel import paint_ink
 from beamerplus.WebServer import WebBridge, WebServer
@@ -34,11 +39,12 @@ class NotebookCanvas(SlideCanvas):
         paint_paper(painter, rect, getattr(self, 'paper', 'plain'))
         for stroke in self.controller.sketchbook_strokes:
             paint_ink(painter, stroke, rect)
+        paint_note_texts(painter, self.controller.sketchbook_texts, rect)
         painter.end()
 
 
 class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
-    def __init__(self, store_path=None, import_state=None, http_port=8080, ws_port=8765):
+    def __init__(self, store_path=None, import_state=None, http_port=8080, ws_port=8765, mcp_connection_file=None):
         QMainWindow.__init__(self)
         self.setWindowTitle('BeamerPlus Notes')
         self.resize(1200, 850)
@@ -47,6 +53,8 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
         self.pdf_reader = None
         self._is_handling_web_stroke = False
         self._web_erase_active = False
+        self._mcp_instance = uuid.uuid4().hex
+        self.mcp_bridge = None
         default_path = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)) / 'notebooks.json'
         path = Path(store_path or os.environ.get('BEAMERPLUS_NOTEBOOK_PATH', default_path))
         self.store = NotebookStore(path)
@@ -59,7 +67,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
         self.canvas.paper = self.store.active.get('paper', 'plain')
         self.slide_view = SimpleNamespace(canvas=self.canvas)
         self.setCentralWidget(self.canvas)
-        self.controller.load_ink(self.store.active['strokes'])
+        self.controller.load_ink(self.store.active['strokes'], self.store.active.get('texts'))
         self.save_timer = QTimer(self)
         self.save_timer.setSingleShot(True)
         self.save_timer.setInterval(600)
@@ -77,12 +85,18 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
         self.web_bridge.erase_ended.connect(self._finish_erase)
         self.web_bridge.redo_requested.connect(self.controller.redo)
         self.web_bridge.client_count_changed.connect(self._finalize_disconnected_ink)
-        for signal in (self.controller.stroke_finished, self.controller.strokes_updated, self.controller.strokes_cleared):
+        self.controller.texts_updated.connect(self._sync_web_texts_updated)
+        for signal in (self.controller.stroke_finished, self.controller.strokes_updated, self.controller.strokes_cleared, self.controller.texts_updated):
             signal.connect(self._ink_changed)
         self._create_menus_and_toolbars()
         self.setStyleSheet('QMainWindow { background:#e9e9ed; } QToolBar {background:#fff; spacing:12px; padding:12px; border:0;} QPushButton {padding:8px 12px; border:1px solid #ddd; border-radius:8px; background:white; color:#24262b;} QLabel {color:#35373d;}')
         self.save_notebook()
         self.web_server.start()
+        connection_file = mcp_connection_file or os.environ.get('BEAMERPLUS_MCP_FILE') or default_path.with_name('mcp-connection.json')
+        try:
+            self.mcp_bridge = NotebookBridge(self._handle_mcp_call, connection_file, self)
+        except OSError:
+            self.tutor_button.setText('GPT連携 · 起動できません')
 
     def _create_menus_and_toolbars(self):
         self.main_toolbar = QToolBar('ノート', self)
@@ -103,6 +117,9 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
         button = QPushButton('✦ Claude設定')
         button.clicked.connect(self.show_ai_settings)
         self.main_toolbar.addWidget(button)
+        self.tutor_button = QPushButton('GPT連携')
+        self.tutor_button.clicked.connect(self.show_tutor_connection)
+        self.main_toolbar.addWidget(self.tutor_button)
         self.save_label = QLabel('保存済み')
         self.main_toolbar.addWidget(self.save_label)
         for label, shortcut, callback in [('保存', QKeySequence.StandardKey.Save, self.save_notebook),
@@ -122,6 +139,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
 
     def _save_notebook_legacy(self):
         self.store.active['strokes'] = self.controller.serialized_ink()
+        self.store.active['texts'] = self.controller.serialized_texts()
         try:
             self.store.save()
             self.save_label.setText('保存済み')
@@ -132,6 +150,57 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
             self.save_label.setText('保存できません。保存先を確認してください')
             self.web_server.broadcast({'type': 'note_error', 'message': 'PCへの保存に失敗しました。保存先を確認してください。'})
             return False
+
+    def show_tutor_connection(self):
+        message = ('このPCのCodexから、今のノートを見て文字を書き込めます。\n'
+                   'スマホからリモート接続した音声会話でも利用できます。\n\n'
+                   'MCP名: beamerplus\n'
+                   '設定後、MCPが使える新しいチャットで「ノートを見て」と話しかけてください。\n'
+                   '青い文字の補足は、消しゴムや「戻す」で取り消せます。')
+        if not self.mcp_bridge:
+            message = '連携の窓口を起動できませんでした。BeamerPlusを起動し直してください。'
+        QMessageBox.information(self, 'GPTとノートを共有', message)
+
+    def _mcp_metadata(self):
+        note = self.store.active
+        version = [self._mcp_instance, note['id'], self.controller.ink_revision,
+                   note['title'], note.get('paper', 'plain'), note.get('aspect', 4 / 3)]
+        return {'note_id': note['id'], 'title': note['title'],
+                'revision': hashlib.sha256(json.dumps(version).encode()).hexdigest(),
+                'aspect': note.get('aspect', 4 / 3), 'paper': note.get('paper', 'plain'),
+                'stroke_count': len(self.controller.sketchbook_strokes),
+                'pen_active': self.controller.current_stroke is not None or self._web_erase_active,
+                'texts': [dict(asdict(item), bounds=text_bounds(item, note.get('aspect', 4 / 3)))
+                          for item in self.controller.sketchbook_texts]}
+
+    def _handle_mcp_call(self, operation, arguments):
+        metadata = self._mcp_metadata()
+        if operation == 'get_note_status':
+            return metadata
+        if operation == 'read_current_note':
+            data = QByteArray()
+            buffer = QBuffer(data)
+            buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+            image = self.render_current_page_image_with_sketch()
+            if not image.save(buffer, 'PNG'):
+                raise ValueError('ノートの画像を取得できませんでした。')
+            self.tutor_button.setText('GPT連携 · 共有中')
+            return dict(metadata, image=base64.b64encode(bytes(data)).decode(),
+                        image_width=image.width(), image_height=image.height())
+        if operation not in ('add_note_text', 'remove_note_text'):
+            raise ValueError('このノート操作は利用できません。')
+        if arguments.get('note_id') != metadata['note_id'] or arguments.get('revision') != metadata['revision']:
+            raise ValueError('ノートが更新されました。read_current_noteで最新の画像を取得してから、位置を確かめて再送してください。')
+        if metadata['pen_active'] or self.controller.pending_edit is not None:
+            raise ValueError('筆記・消去中です。ペンを離してから、ノートを読み直して書き込んでください。')
+        if operation == 'add_note_text':
+            item = self.controller.add_note_text(arguments, metadata['aspect'])
+            result = {'text_id': item.id}
+        else:
+            self.controller.remove_note_text(arguments.get('text_id'))
+            result = {'removed_text_id': arguments.get('text_id')}
+        saved = self.save_notebook()
+        return dict(self._mcp_metadata(), **result, saved=saved)
 
     def _on_notebook_command_legacy(self, data):
         kind = data.get('type')
@@ -152,7 +221,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
             self._document_id = self.store.active_id
             self.canvas.aspect = self.store.active.get('aspect', 4 / 3)
             self.canvas.paper = self.store.active.get('paper', 'plain')
-            self.controller.load_ink(self.store.active['strokes'])
+            self.controller.load_ink(self.store.active['strokes'], self.store.active.get('texts'))
             self.title_label.setText(self.store.active['title'])
             self.save_notebook()
         elif kind == 'note_title':
@@ -204,6 +273,8 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
                 'notes': [{'id': note['id'], 'title': note['title']} for note in self.store.notes],
                 'currentPage': 0, 'totalPages': 0, 'isSketchbook': True, 'isSketchVisible': True,
                 'strokes': [], 'sketchbookStrokes': self.controller.serialized_ink(),
+                'noteTexts': [annotation_payload(item, self.store.active.get('aspect', 4 / 3))
+                              for item in self.controller.sketchbook_texts],
                 'canUndo': bool(self.controller.undo_stack or self.controller.pending_edit is not None),
                 'canRedo': bool(self.controller.redo_stack)}
 
@@ -219,6 +290,14 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
 
     def _sync_web_strokes_cleared(self, index):
         self._sync_web_strokes_updated(index)
+
+    def _sync_web_texts_updated(self, index):
+        self.web_server.broadcast({'type': 'note_texts_updated', 'documentId': self.store.active_id,
+                                   'inkRevision': self.controller.ink_revision,
+                                   'texts': [annotation_payload(item, self.store.active.get('aspect', 4 / 3))
+                                             for item in self.controller.sketchbook_texts]})
+        self.web_server.broadcast({'type': 'note_history', 'canUndo': bool(self.controller.undo_stack or self.controller.pending_edit is not None),
+                                   'canRedo': bool(self.controller.redo_stack)})
 
     def _on_web_erase_requested(self, data):
         super()._on_web_erase_requested(data)
@@ -255,6 +334,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
         paint_paper(painter, QRectF(0, 0, width, height), self.store.active.get('paper', 'plain'))
         for stroke in self.controller.sketchbook_strokes:
             paint_ink(painter, stroke, QRectF(0, 0, width, height))
+        paint_note_texts(painter, self.controller.sketchbook_texts, QRectF(0, 0, width, height))
         painter.end()
         return image
 
@@ -275,6 +355,8 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
         if not self.save_notebook():
             event.ignore()
             return
+        if self.mcp_bridge:
+            self.mcp_bridge.stop()
         self.web_server.stop()
         QMainWindow.closeEvent(self, event)
 
