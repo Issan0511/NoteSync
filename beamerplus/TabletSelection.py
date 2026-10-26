@@ -191,7 +191,7 @@ const handleMessageBeforeSelection=handleServerMessage;
 handleServerMessage=function(msg){
   if(msg.type==='note_ink_edit_result'){
     if(msg.requestId!==selectionRequest)return;selectionRequest=null;
-    if(msg.ok&&msg.documentId===currentDocumentId){inkRevision=msg.inkRevision;selectedInk=msg.indices||[];currentTool='lasso';updatePenUI();renderInkSelection();}
+    if(msg.ok&&msg.documentId===currentDocumentId){inkRevision=msg.inkRevision;if(currentTool==='lasso')selectedInk=msg.indices||[];else clearInkSelection();updatePenUI();renderInkSelection();}
     else clearInkSelection();return;
   }
   const changedDocument=msg.type==='state_sync'&&msg.documentId!==currentDocumentId;

@@ -237,6 +237,12 @@ INPUT_SCRIPT = PEN_PROTOCOL_SCRIPT + r"""
       // is held. Toggle on the hover press, then draw with the button released.
       for (const name of ['pointerenter', 'pointerdown', 'pointermove', 'pointerup']) {
         activeCanvas.addEventListener(name, observePenButton, {capture:true});
+        // Selection frames and handles sit above the ink canvas. Their hover
+        // button events must use the same shortcut without observing ink twice.
+        stage.addEventListener(name, e => {
+          if (e.target !== activeCanvas && (e.target === stage
+              || e.target?.closest?.('#slide-wrapper'))) observePenButton(e);
+        }, {capture:true});
       }
       activeCanvas.addEventListener('pointerenter', e => { if (e.pointerType === 'pen') penInRange = true; });
       activeCanvas.addEventListener('pointerleave', e => {

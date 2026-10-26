@@ -166,7 +166,13 @@ SCRIPT = r"""
     function openFavorites(x,y){openOverlay('wheel-overlay');renderFavorites();const size=258,wheel=$('favorites-wheel'),r=stage.getBoundingClientRect();wheel.style.left=`${Math.max(12,Math.min(r.right-size-12,(x??(r.left+r.width/2))-size/2))}px`;wheel.style.top=`${Math.max(r.top+8,Math.min(r.bottom-size-8,(y??(r.top+r.height/2))-size/2))}px`;}
     let favoriteGesture=null;
     function resetPenButtonGesture(){favoriteGesture?.reset();}
-    function handlePenButtonGesture(e,signal){favoriteGesture??=new PenShortcutGesture();if(favoriteGesture.update(signal,performance.now())){openFavorites(e.clientX,e.clientY);return true;}return false;}
+    function handlePenButtonGesture(e,signal){
+      favoriteGesture??=new PenShortcutGesture();
+      if(!favoriteGesture.update(signal,performance.now()))return false;
+      if(selectedBrush==='highlighter')setBrush('pen');
+      isLineMode=false;selectTool('pen');
+      openFavorites(e.clientX,e.clientY);return true;
+    }
     $('open-favorites').addEventListener('click',()=>openFavorites());$('wheel-settings').addEventListener('click',()=>openOverlay('pen-overlay'));
     btnPen.addEventListener('click',()=>{if(currentTool==='pen')openOverlay('pen-overlay');else{if(selectedBrush==='highlighter')setBrush('pen');selectTool('pen');}});
     btnHighlighter.addEventListener('click',()=>{if(currentTool==='highlighter')openOverlay('pen-overlay');else setBrush('highlighter');});

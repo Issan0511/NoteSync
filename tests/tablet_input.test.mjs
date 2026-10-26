@@ -7,6 +7,9 @@ const protocolScript = fs.readFileSync(new URL('../beamerplus/PenProtocol.py', i
   .split('PEN_PROTOCOL_SCRIPT = r"""')[1].split('"""')[0];
 const inputScript = protocolScript + fs.readFileSync(new URL('../beamerplus/TabletInput.py', import.meta.url), 'utf8')
   .split('INPUT_SCRIPT = PEN_PROTOCOL_SCRIPT + r"""')[1].split('"""')[0];
+const notebookSource = fs.readFileSync(new URL('../beamerplus/TabletNotebook.py', import.meta.url), 'utf8');
+const favoriteShortcutScript = notebookSource.slice(notebookSource.indexOf('    let favoriteGesture=null;'),
+  notebookSource.indexOf("    $('open-favorites').addEventListener"));
 
 function harness(modern = true, userAgent = '') {
   const context = vm.createContext({});
@@ -456,4 +459,60 @@ test('lasso tool cannot accidentally deposit pen ink, including barrel release m
   assert.equal(h.state().slideStrokes.length,0);
   assert.equal(h.state().sent.filter(m=>m.type==='stroke_start').length,0);
   assert.ok(h.state().sent.some(m=>m.type==='erase'));
+});
+
+function installFavoriteShortcut(h,tool,brush='fountain') {
+  h.evaluate(`let selectedBrush=${JSON.stringify(brush)},shortcutTime=0,opened=[];
+    const performance={now:()=>shortcutTime};
+    currentTool=${JSON.stringify(tool)};isLineMode=true;
+    function setBrush(brush){selectedBrush=brush;selectTool(brush);}
+    function openFavorites(x,y){opened.push({tool:currentTool,brush:selectedBrush,line:isLineMode,x,y});}
+  `);
+  h.evaluate(favoriteShortcutScript);
+}
+
+test('double hover click returns every mode to pen before opening favorites',()=>{
+  for(const tool of ['eraser','lasso','highlighter','pen',null]){
+    const h=harness(true,samsungAgent);installFavoriteShortcut(h,tool,tool==='highlighter'?'highlighter':'fountain');
+    for(let click=0;click<2;click++){
+      h.evaluate(`shortcutTime=${click*150}`);
+      h.fire('pointermove',{button:0,buttons:1,pressure:0});
+      h.evaluate(`shortcutTime=${click*150+50}`);
+      h.fire('pointermove',{button:-1,buttons:0,pressure:0});
+      if(click===0)assert.equal(h.evaluate('opened.length'),0);
+    }
+    const opened=JSON.parse(h.evaluate('JSON.stringify(opened)'));
+    assert.deepEqual(opened,[{tool:'pen',brush:tool==='highlighter'?'pen':'fountain',line:false,x:100,y:100}]);
+    assert.equal(h.state().sent.filter(m=>m.type==='stroke_start').length,0);
+  }
+});
+
+test('double clicking over a selection frame also returns to pen; zoom controls do not trigger it',()=>{
+  for(const location of ['selection','zoom']){
+    const h=harness(true,samsungAgent);installFavoriteShortcut(h,'lasso');
+    const target=location==='selection'?{closest:()=>true}:{closest:()=>null};
+    for(let click=0;click<2;click++)for(const down of [true,false]){
+      h.evaluate(`shortcutTime=${click*150+(down?0:50)}`);
+      const e={type:'pointermove',pointerType:'pen',pointerId:1,button:down?0:-1,buttons:down?1:0,
+        pressure:0,clientX:350,clientY:250,target};
+      for(const handler of h.evaluate('stage.listeners.pointermove||[]'))handler(e);
+    }
+    assert.equal(h.evaluate('opened.length'),location==='selection'?1:0);
+    assert.equal(h.evaluate('currentTool'),location==='selection'?'pen':'lasso');
+  }
+});
+
+test('a delayed selection acknowledgement preserves the pen mode chosen by the shortcut',()=>{
+  const source=fs.readFileSync(new URL('../beamerplus/TabletSelection.py',import.meta.url),'utf8');
+  const start=source.indexOf('handleServerMessage=function(msg){');
+  const handler=source.slice(start,source.indexOf('\n};',start)+3);
+  const context=vm.createContext({});
+  vm.runInContext(`let currentTool='pen',inkRevision=1,selectedInk=[],selectionRequest='pending',currentDocumentId='note';
+    function clearInkSelection(){selectedInk=[];}function updatePenUI(){}function renderInkSelection(){}
+    ${handler}
+    handleServerMessage({type:'note_ink_edit_result',requestId:'pending',ok:true,documentId:'note',inkRevision:2,indices:[0]});
+  `,context);
+  assert.equal(vm.runInContext('currentTool',context),'pen');
+  assert.equal(vm.runInContext('selectedInk.length',context),0);
+  assert.equal(vm.runInContext('inkRevision',context),2);
 });
