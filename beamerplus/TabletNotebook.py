@@ -12,6 +12,7 @@ from beamerplus.NotebookText import NOTE_TEXT_SCRIPT
 from beamerplus.TabletText import INSTALL_TEXT_SCRIPT
 from beamerplus.TabletVersion import VERSION_SCRIPT
 from beamerplus.TabletPages import PAGES_SCRIPT, PAGES_STYLE
+from beamerplus.TabletContinuous import CONTINUOUS_SCRIPT, CONTINUOUS_STYLE
 
 
 ICONS = {
@@ -126,8 +127,8 @@ SCRIPT = r"""
     function canEditNotebook(){return notebookReady;}
     function startSwipe(){isTrackingSwipe=false;}function checkSwipe(){isTrackingSwipe=false;}
     function getPointerNormPos(e){const r=slideWrapper.getBoundingClientRect();return {normX:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),normY:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};}
-    function drawStroke(ctx,stroke){
-      const points=stroke.points;if(!points||!points.length)return;const w=slideWrapper.clientWidth,h=slideWrapper.clientHeight,width=Math.max(.6,Math.min(w,h)*stroke.width_ratio);
+    function drawStroke(ctx,stroke,w=slideWrapper.clientWidth,h=slideWrapper.clientHeight){
+      const points=stroke.points;if(!points||!points.length)return;const width=Math.max(.6,Math.min(w,h)*stroke.width_ratio);
       ctx.save();ctx.strokeStyle=stroke.color;ctx.fillStyle=stroke.color;ctx.globalAlpha=stroke.opacity??1;ctx.lineWidth=width;ctx.lineCap=stroke.brush==='highlighter'?'butt':'round';ctx.lineJoin='round';
       if(points.length===1){ctx.beginPath();ctx.arc(points[0][0]*w,points[0][1]*h,width/2,0,Math.PI*2);ctx.fill();}
       else if(stroke.brush==='fountain'){
@@ -239,16 +240,18 @@ SCRIPT = r"""
     __LIBRARY_SCRIPT__
     __MENUS_SCRIPT__
     __PAGES_SCRIPT__
+    __CONTINUOUS_SCRIPT__
     __VERSION_SCRIPT__
     updatePenUI();setHistory({canUndo:false,canRedo:false});adjustLayout();connectWS();
     window.addEventListener('resize',adjustLayout);window.visualViewport?.addEventListener('resize',adjustLayout);
 """
 
-NOTEBOOK_HTML = (f'<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>BeamerPlus Notes</title><style>{ASSISTANT_STYLE}{STYLE}{NAVIGATION_STYLE}{SELECTION_STYLE}{FAVORITES_STYLE}{LIBRARY_STYLE}{MENUS_STYLE}{PAGES_STYLE}</style></head><body>{MARKUP}{ASSISTANT_MARKUP}<script>'
+NOTEBOOK_HTML = (f'<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>BeamerPlus Notes</title><style>{ASSISTANT_STYLE}{STYLE}{NAVIGATION_STYLE}{SELECTION_STYLE}{FAVORITES_STYLE}{LIBRARY_STYLE}{MENUS_STYLE}{PAGES_STYLE}{CONTINUOUS_STYLE}</style></head><body>{MARKUP}{ASSISTANT_MARKUP}<script>'
                  + SCRIPT.replace('__INPUT_SCRIPT__', INPUT_SCRIPT).replace('__ASSISTANT_SCRIPT__', ASSISTANT_SCRIPT).replace('__NOTE_TEXT_SCRIPT__', NOTE_TEXT_SCRIPT)
                  .replace('__NAVIGATION_SCRIPT__', NAVIGATION_SCRIPT).replace('__SELECTION_SCRIPT__', SELECTION_SCRIPT)
                  .replace('__INSTALL_TEXT_SCRIPT__', INSTALL_TEXT_SCRIPT)
                  .replace('__FAVORITES_SCRIPT__', FAVORITES_SCRIPT).replace('__ERASER_CURSOR_SCRIPT__', ERASER_CURSOR_SCRIPT)
                  .replace('__LIBRARY_SCRIPT__', LIBRARY_SCRIPT).replace('__MENUS_SCRIPT__', MENUS_SCRIPT)
                  .replace('__PAGES_SCRIPT__', PAGES_SCRIPT)
+                 .replace('__CONTINUOUS_SCRIPT__', CONTINUOUS_SCRIPT)
                  .replace('__VERSION_SCRIPT__', VERSION_SCRIPT) + '</script></body></html>')

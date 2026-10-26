@@ -171,6 +171,17 @@ def _notes(data):
             _mirror_active_page(note)
         else:
             note.update(_page_content(raw, budget))
+        if 'pageTrash' in raw:
+            if not isinstance(raw['pageTrash'], list) or len(raw['pageTrash']) > MAX_PAGES:
+                raise ValueError('ページの復元データを確認してください。')
+            note['pageTrash'] = []
+            for entry in raw['pageTrash']:
+                if (not isinstance(entry, dict) or entry.get('kind') not in ('clear', 'delete')
+                        or type(entry.get('index')) is not int or not 0 <= entry['index'] <= MAX_PAGES):
+                    raise ValueError('ページの復元データを確認してください。')
+                content = _page_content(entry.get('page'), budget)
+                content['id'] = _identifier(entry['page'].get('id'))
+                note['pageTrash'].append(dict(kind=entry['kind'], index=entry['index'], page=content))
         for key in _TIMESTAMPS:
             if key in raw:
                 note[key] = _timestamp(raw[key])
@@ -284,6 +295,14 @@ def parse_notebook_backup(data, *, existing_notes=()):
                 for item in page['texts']:
                     item['id'] = _fresh_id(used)
             note['activePageId'] = page_ids[note['activePageId']]
+            for entry in note.get('pageTrash', []):
+                page = entry['page']
+                old = page['id']
+                if old not in page_ids:
+                    page_ids[old] = _fresh_id(used)
+                page['id'] = page_ids[old]
+                for item in page['texts']:
+                    item['id'] = _fresh_id(used)
             _mirror_active_page(note)
         else:
             for item in note['texts']:

@@ -54,11 +54,16 @@ class NotebookFilesMixin:
                     filename = (filename if action == 'backup' else 'SpenNotes-全ノート') + '.spennotes'
                 else:
                     if action == 'png':
-                        image = self.render_current_page_image_with_sketch()
+                        pages = self.store.ensure_pages(self.store.active)
+                        target = next((p for p in pages if p['id'] == data.get('pageId', self.store.active_page['id'])), None)
+                        if target is None:
+                            raise ValueError('書き出すページが見つかりません。')
+                        image = (self.render_current_page_image_with_sketch() if target['id'] == self.store.active_page['id']
+                                 else self.render_notebook_page_image(target))
                         blob = image_to_png_bytes(image)
                         mime = 'image/png'
                         pages = self.store.ensure_pages(self.store.active)
-                        index = next(i for i, page in enumerate(pages) if page['id'] == self.store.active_page['id'])
+                        index = next(i for i, page in enumerate(pages) if page['id'] == target['id'])
                         filename += f'-ページ{index + 1}'
                     else:
                         pages = self.store.ensure_pages(self.store.active)

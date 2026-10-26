@@ -59,6 +59,7 @@ $('zoom-out').addEventListener('click',()=>zoomNotebook(notebookView.scale/1.35)
 $('zoom-fit').addEventListener('click',()=>{finishActiveInput();notebookView.reset();refreshNotebookView(true);});
 stage.addEventListener('wheel',e=>{
   if(e.target.closest('button,input,select,textarea'))return;
+  if(typeof scrollNotebookWheel==='function'){scrollNotebookWheel(e);return;}
   e.preventDefault();finishActiveInput();
   if(e.ctrlKey||e.metaKey)notebookView.zoomAt(notebookView.scale*Math.exp(-e.deltaY*.007),{x:e.clientX,y:e.clientY},viewCenter());
   else if(notebookView.scale>1){notebookView.x-=e.deltaX;notebookView.y-=e.deltaY;}
@@ -78,6 +79,7 @@ stage.addEventListener('pointerdown',e=>{
     viewTouches.clear();pinchBaseline=null;
   }
   if(e.pointerType!=='touch'||e.target.closest('button,input,select,textarea,[data-selection-handle],#selection-box'))return;
+  if(typeof continuousInkQueue!=='undefined'&&continuousInkQueue)return;
   if(isDrawing||inkPointerId!==null||typeof selectionPointerActive==='function'&&selectionPointerActive())return;
   // The default pen-only mode reserves fingers for navigation, including while hovering.
   if(!penOnlyToggle.checked&&viewTouches.size===0)return;
@@ -96,13 +98,14 @@ stage.addEventListener('pointermove',e=>{
     notebookView.scale=pinchBaseline.scale;notebookView.x=pinchBaseline.x;notebookView.y=pinchBaseline.y;
     notebookView.zoomAt(pinchBaseline.scale*Math.hypot(b.x-a.x,b.y-a.y)/pinchBaseline.distance,pinchBaseline.mid,center);
     notebookView.x+=mid.x-pinchBaseline.mid.x;notebookView.y+=mid.y-pinchBaseline.mid.y;
-  }else if(pinchBaseline?.panAllowed&&notebookView.scale>1){notebookView.x=pinchBaseline.x+points[0].x-pinchBaseline.mid.x;notebookView.y=pinchBaseline.y+points[0].y-pinchBaseline.mid.y;}
+  }else if(pinchBaseline?.panAllowed&&(notebookView.scale>1||typeof notebookContinuousEnabled!=='undefined')){notebookView.x=pinchBaseline.x+points[0].x-pinchBaseline.mid.x;notebookView.y=pinchBaseline.y+points[0].y-pinchBaseline.mid.y;}
   refreshNotebookView();e.preventDefault();e.stopImmediatePropagation();
 },{capture:true,passive:false});
 function endViewPointer(e){
   if(!viewTouches.delete(e.pointerId))return;
   if(stage.hasPointerCapture(e.pointerId))stage.releasePointerCapture(e.pointerId);
   beginViewGesture();if(!viewTouches.size)refreshNotebookResolution();e.preventDefault();e.stopImmediatePropagation();
+  if(!viewTouches.size&&typeof settleNotebookScroll==='function')settleNotebookScroll();
 }
 stage.addEventListener('pointerup',endViewPointer,{capture:true});stage.addEventListener('pointercancel',endViewPointer,{capture:true});
 stage.addEventListener('lostpointercapture',e=>{if(viewTouches.delete(e.pointerId))beginViewGesture();});

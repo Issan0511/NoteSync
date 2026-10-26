@@ -511,7 +511,7 @@ class WebServer:
                 'erase_start', 'erase', 'erase_end', 'line_update', 'undo', 'redo', 'clear')):
             self.bridge.page_ink_command.emit(data)
             return
-        if msg_type == 'note_file':
+        if msg_type in ('note_file', 'note_page_preview'):
             payload = dict(data)
             payload['_reply_client'] = reply_client
             self.bridge.notebook_command.emit(payload)

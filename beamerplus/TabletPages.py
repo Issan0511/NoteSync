@@ -15,7 +15,7 @@ PAGES_STYLE = r"""
 
 PAGES_SCRIPT = r"""
 const notebookPageIcon=name=>'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+({previous:'<path d="m14 6-6 6 6 6"/>',next:'<path d="m10 6 6 6-6 6"/>',add:'<path d="M12 4v16M4 12h16"/>',close:'<path d="m6 6 12 12M18 6 6 18"/>'}[name]||'')+'</svg>';
-let notebookPages=[],notebookPageIndex=0,notebookPagePending=null,notebookPageSequence=0;
+let notebookPages=[],notebookPageIndex=0,notebookPagePending=null,notebookPageSequence=0,notebookPageCanRestore=false,notebookPageCanPaste=false;
 const notebookPageControls=document.createElement('nav');notebookPageControls.id='notebook-pages-controls';notebookPageControls.setAttribute('aria-label','ノートのページ');
 notebookPageControls.innerHTML=`<button type="button" id="notebook-page-previous" aria-label="前のページ">${notebookPageIcon('previous')}</button><button type="button" id="notebook-pages-number" aria-label="ページ一覧を開く">– / –</button><button type="button" id="notebook-page-next" aria-label="次のページ">${notebookPageIcon('next')}</button><button type="button" id="notebook-page-add" aria-label="新しいページを追加">${notebookPageIcon('add')}ページ</button>`;$('page-footer').appendChild(notebookPageControls);
 const notebookPagesOverlay=document.createElement('div');notebookPagesOverlay.id='notebook-pages-overlay';notebookPagesOverlay.className='overlay';notebookPagesOverlay.hidden=true;
@@ -23,6 +23,8 @@ notebookPagesOverlay.innerHTML=`<section id="notebook-pages-sheet" class="sheet"
 function notebookPageMessage(message,error=false){$('notebook-pages-message').textContent=message;$('notebook-pages-message').classList.toggle('error',error);}
 function notebookPageCount(value){return Number.isFinite(value)&&value>=0?Math.floor(value):0;}
 function renderNotebookPages(status={}){
+  if(typeof status.canRestorePage==='boolean')notebookPageCanRestore=status.canRestorePage;
+  if(typeof status.canPastePage==='boolean')notebookPageCanPaste=status.canPastePage;
   if(Array.isArray(status.pages))notebookPages=status.pages.filter(page=>typeof page.id==='string').map(page=>({...page}));
   if(!notebookPages.length&&currentDocumentId)notebookPages=[{id:currentDocumentId,index:0,strokeCount:0,textCount:0}];
   const active=notebookPages.findIndex(page=>page.id===(status.pageId||currentDocumentId));
@@ -42,11 +44,11 @@ function renderNotebookPages(status={}){
 }
 function openNotebookPages(){finishActiveInput();closeOverlays();notebookPagesOverlay.hidden=false;renderNotebookPages();}
 function requestNotebookPage(action,pageId){
-  if(notebookPagePending||!['add','select'].includes(action))return false;
+  if(notebookPagePending||!['add','select','copy','cut','paste','delete','clear','restore'].includes(action))return false;
   if(!notebookReady||!currentDocumentId){const message='PCに接続してから、もう一度お試しください';notebookPageMessage(message,true);showToast(message);return false;}
   if(action==='select'&&(!notebookPages.some(page=>page.id===pageId)||pageId===currentDocumentId))return false;
   finishActiveInput();if(typeof flushNotebookTitle==='function')flushNotebookTitle();
-  const requestId='page_'+Date.now().toString(36)+'_'+(++notebookPageSequence),message={type:'note_page',action,documentId:currentDocumentId,requestId};if(action==='select')message.pageId=pageId;
+  const requestId='page_'+Date.now().toString(36)+'_'+(++notebookPageSequence),message={type:'note_page',action,documentId:currentDocumentId,requestId};if(pageId)message.pageId=pageId;
   if(!sendWS(message)){const error='ページを変更できませんでした。接続を確認してください';notebookPageMessage(error,true);showToast(error);return false;}
   notebookPagePending={requestId,action,pageId,notebookId:typeof currentNotebookId==='string'?currentNotebookId:'',acknowledged:false,targetPageId:null};
   notebookPageMessage(action==='add'?'ページを追加しています…':'ページを開いています…');renderNotebookPages();return true;
@@ -54,7 +56,8 @@ function requestNotebookPage(action,pageId){
 function completeNotebookPageRequest(){
   const pending=notebookPagePending;if(!pending||!pending.acknowledged||pending.targetPageId!==currentDocumentId)return;
   if(pending.notebookId&&typeof currentNotebookId==='string'&&pending.notebookId!==currentNotebookId)return;
-  notebookPagePending=null;notebookPageMessage('');notebookPagesOverlay.hidden=true;renderNotebookPages();
+  const action=pending.action;notebookPagePending=null;notebookPageMessage('');if(typeof notebookContinuousEnabled==='undefined')notebookPagesOverlay.hidden=true;renderNotebookPages();
+  if(['copy','cut','delete','clear','paste','restore'].includes(action))showToast({copy:'ページをコピーしました。「貼り付け」で追加できます',cut:'ページを切り取りました。貼り付け・元に戻すができます',delete:'ページを削除しました。ページ一覧の「元に戻す」で復元できます',clear:'ページを消去しました。ページ一覧の「元に戻す」で復元できます',paste:'ページを貼り付けました',restore:'ページ操作を元に戻しました'}[action]);
 }
 $('notebook-pages-number').addEventListener('click',openNotebookPages);$('notebook-pages-close').addEventListener('click',()=>notebookPagesOverlay.hidden=true);
 $('notebook-page-add').addEventListener('click',()=>requestNotebookPage('add'));$('notebook-pages-add-sheet').addEventListener('click',()=>requestNotebookPage('add'));
@@ -68,6 +71,7 @@ const sendBeforePages=sendWS;sendWS=function(message){return sendBeforePages(not
 // and selection starts are paused while the requested page is being loaded.
 stage.addEventListener('pointerdown',event=>{
   if(!notebookPagePending)return;
+  if(typeof queuePendingPaperInput==='function'&&queuePendingPaperInput(event))return;
   const selectionTarget=event.target.closest?.('#selection-box,[data-selection-handle]');
   if(event.pointerType==='touch'&&penOnlyToggle.checked&&!selectionTarget)return;
   event.preventDefault();event.stopImmediatePropagation();

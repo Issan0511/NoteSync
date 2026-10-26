@@ -244,11 +244,18 @@ class NotebookLibraryMixin:
             if hasattr(self.store, 'ensure_pages'):
                 pages = self.store.ensure_pages(note)
                 selected = note['activePageId']
+                page_ids = {}
                 for index, page in enumerate(pages):
                     old_id = page['id']
                     page['id'] = note['id'] if index == 0 else uuid.uuid4().hex
+                    page_ids[old_id] = page['id']
                     if old_id == selected:
                         note['activePageId'] = page['id']
+                    for item in page.get('texts', []):
+                        item['id'] = uuid.uuid4().hex
+                for entry in note.get('pageTrash', []):
+                    page = entry['page']
+                    page['id'] = page_ids.setdefault(page['id'], uuid.uuid4().hex)
                     for item in page.get('texts', []):
                         item['id'] = uuid.uuid4().hex
                 selected_page = next(page for page in pages if page['id'] == note['activePageId'])

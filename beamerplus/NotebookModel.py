@@ -91,6 +91,16 @@ class NotebookStore:
                         raise ValueError('ノートのページ識別子が重複しています')
                     page_ids.add(page['id'])
                     self._validate_page(page)
+                trash = note.get('pageTrash', [])
+                if not isinstance(trash, list):
+                    raise ValueError('ページの復元データを確認してください')
+                for entry in trash:
+                    if (not isinstance(entry, dict) or entry.get('kind') not in ('clear', 'delete')
+                            or type(entry.get('index')) is not int or entry['index'] < 0
+                            or not isinstance(entry.get('page'), dict)
+                            or not isinstance(entry['page'].get('id'), str)):
+                        raise ValueError('ページの復元データを確認してください')
+                    self._validate_page(entry['page'])
                 self._mirror_page(note, self._page_for_note(note))
             self.active_id = data.get('activeId')
         if not self.notes:
@@ -172,7 +182,7 @@ class NotebookStore:
         if len(note['pages']) >= self.MAX_PAGES:
             raise ValueError('これ以上ページを追加できません。新しいノートを作ってください。')
         page = {'id': uuid.uuid4().hex, 'strokes': [], 'texts': [],
-                'paper': current['paper'], 'aspect': current['aspect']}
+                'paper': current['paper'], 'aspect': .75}
         note['pages'].append(page)
         note['activePageId'] = page['id']
         self._mirror_page(note, page)
@@ -206,7 +216,7 @@ class NotebookStore:
         page['texts'] = [asdict(prepare_text(item, page['aspect'])) for item in page['texts']]
 
     def new_note(self, title='新しいノート'):
-        note = {'id': uuid.uuid4().hex, 'title': title[:120], 'paper': 'plain', 'aspect': 4 / 3, 'strokes': [], 'texts': []}
+        note = {'id': uuid.uuid4().hex, 'title': title[:120], 'paper': 'plain', 'aspect': .75, 'strokes': [], 'texts': []}
         self.ensure_pages(note)
         self.notes.insert(0, note)
         self.active_id = note['id']

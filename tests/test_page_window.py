@@ -171,6 +171,8 @@ class NotebookPageWindowTests(unittest.TestCase):
         self.assertEqual(self.window.page_label.text(), '2 / 2 ページ')
 
     def test_pdf_contains_all_page_aspects_and_png_contains_current_page_only(self):
+        self.window.store.active['aspect'] = 4 / 3
+        self.window.canvas.aspect = 4 / 3
         first, second, _ = self.two_pages()
         self.window.store.active.update(aspect=.75, paper='ruled')
         self.window.canvas.aspect = .75
@@ -266,6 +268,22 @@ class NotebookPageWindowTests(unittest.TestCase):
         self.window.web_server._handle_client_message(dict(type='stroke_end', documentId=second))
         self.assertIsNone(self.window.controller.current_stroke)
         self.assertEqual(len(self.window.controller.sketchbook_strokes), 2)
+
+    def test_share_png_for_an_inactive_page_does_not_change_current_page_or_undo(self):
+        first, second, _ = self.two_pages()
+        revision = self.window.controller.ink_revision
+        undo = deepcopy(self.window.controller.undo_stack)
+        self.window.web_server._handle_client_message(dict(type='note_file', action='png',
+            requestId='share-first-page', documentId=second, pageId=first), self.client)
+        client, reply = self.replies[-1]
+        self.assertIs(client, self.client)
+        self.assertTrue(reply['ok'])
+        self.assertIn('ページ1.png', reply['filename'])
+        image = QImage.fromData(base64.b64decode(reply['data']))
+        self.assertEqual(image.pixelColor(image.width() // 2, round(image.height() * .25)).name(), '#3478dc')
+        self.assertEqual(self.window._document_id, second)
+        self.assertEqual(self.window.controller.ink_revision, revision)
+        self.assertEqual(self.window.controller.undo_stack, undo)
 
 
 if __name__ == '__main__':

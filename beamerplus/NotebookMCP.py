@@ -56,7 +56,7 @@ class NotebookClient:
             raise ValueError(message or 'BeamerPlusへの接続に失敗しました。起動し直して接続を確認してください。') from exc
         except (URLError, OSError, ValueError) as exc:
             raise ValueError('BeamerPlusに接続できません。起動しているか確認してください。') from exc
-        if 'error' in result:
+        if result.get('error') is not None:
             raise ValueError(result['error'])
         return result
 

@@ -68,6 +68,8 @@ class NotebookTextTests(unittest.TestCase):
     def test_text_identity_line_breaks_and_ink_survive_atomic_save_and_reload(self):
         with tempfile.TemporaryDirectory() as directory:
             store = NotebookStore(Path(directory) / 'notes.json')
+            # This fixture creates its annotation with the legacy landscape layout.
+            store.active['aspect'] = 4 / 3
             self.stroke()
             item = self.add_text()
             self.assertIn('\n', item.text)
