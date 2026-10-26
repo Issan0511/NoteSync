@@ -507,8 +507,8 @@ test('a delayed selection acknowledgement preserves the pen mode chosen by the s
   const start=source.indexOf('handleServerMessage=function(msg){');
   const handler=source.slice(start,source.indexOf('\n};',start)+3);
   const context=vm.createContext({});
-  vm.runInContext(`let currentTool='pen',inkRevision=1,selectedInk=[],selectionRequest='pending',currentDocumentId='note';
-    function clearInkSelection(){selectedInk=[];}function updatePenUI(){}function renderInkSelection(){}
+  vm.runInContext(`let currentTool='pen',inkRevision=1,selectedInk=[],selectionRequest='pending',selectionPending=null,currentDocumentId='note',sketchbookStrokes=[];
+    function clearInkSelection(){selectedInk=[];}function updatePenUI(){}function renderInkSelection(){}function renderAllStrokes(){}
     ${handler}
     handleServerMessage({type:'note_ink_edit_result',requestId:'pending',ok:true,documentId:'note',inkRevision:2,indices:[0]});
   `,context);

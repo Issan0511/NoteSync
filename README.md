@@ -39,6 +39,8 @@ S Penボタンは **Samsung Internet** で使用してください。Galaxy Tab 
 
 筆記中の接続先PCが必要です。右上に再接続中と表示された場合は、接続が戻ってから書いてください。
 
+選択した筆跡の移動・拡大縮小はブラウザですぐに表示し、その後PCへ保存します。
+
 ## Claudeに質問
 
 PCの「Claude設定」でAnthropicのAPIキーを入力します。標準モデルは `claude-sonnet-5-5` です。`ANTHROPIC_API_KEY` と `BEAMERPLUS_CLAUDE_MODEL` でも設定できます。

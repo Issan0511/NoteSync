@@ -2,7 +2,8 @@
 
 SELECTION_STYLE = r"""
 #selection-canvas{pointer-events:none;z-index:3}
-#selection-box{position:absolute;border:1px solid #718df1;z-index:5;cursor:move;touch-action:none;transform-origin:center}
+#selection-layer{position:absolute;inset:0;z-index:5;pointer-events:none;transform-origin:0 0;will-change:transform}
+#selection-box{position:absolute;border:1px solid #718df1;z-index:5;pointer-events:auto;cursor:move;touch-action:none;transform-origin:center}
 #selection-box[hidden],#selection-actions[hidden],#selection-style[hidden]{display:none!important}
 .selection-handle{position:absolute;width:12px;height:12px;border:1px solid #718df1;border-radius:50%;background:#fff;transform:translate(-50%,-50%) scale(calc(1 / var(--view-scale,1)));touch-action:none}
 .selection-handle[data-selection-handle=nw]{left:0;top:0;cursor:nwse-resize}.selection-handle[data-selection-handle=ne]{left:100%;top:0;cursor:nesw-resize}.selection-handle[data-selection-handle=sw]{left:0;top:100%;cursor:nesw-resize}.selection-handle[data-selection-handle=se]{left:100%;top:100%;cursor:nwse-resize}
@@ -52,15 +53,20 @@ class InkSelectionGeometry {
     const a=Math.cos(angle),b=Math.sin(angle)*aspect,c=-Math.sin(angle)/aspect,d=a;
     return [a,b,c,d,center.x-a*center.x-c*center.y,center.y-b*center.x-d*center.y];
   }
+  static cssMatrix(matrix,width,height){
+    const [a,b,c,d,e,f]=matrix;return [a,b*height/width,c*width/height,d,e*width,f*height];
+  }
 }
 """
 
 SELECTION_SCRIPT = SELECTION_GEOMETRY_SCRIPT + r"""
 let inkRevision=0,selectedInk=[],selectionClipboard=[],selectionRequest=null,selectionDrag=null,lassoPath=[],lassoPointer=null,lassoArmed=false,selectionSequence=0;
+let selectionPending=null,selectionFrame=null,selectionBackgroundSplit=false;
 const selectionSession=Date.now().toString(36)+'_'+Math.random().toString(36).slice(2);
-const selectionCanvas=document.createElement('canvas');selectionCanvas.id='selection-canvas';slideWrapper.appendChild(selectionCanvas);
+const selectionLayer=document.createElement('div');selectionLayer.id='selection-layer';slideWrapper.appendChild(selectionLayer);
+const selectionCanvas=document.createElement('canvas');selectionCanvas.id='selection-canvas';selectionLayer.appendChild(selectionCanvas);
 const selectionBox=document.createElement('div');selectionBox.id='selection-box';selectionBox.hidden=true;selectionBox.setAttribute('aria-label','選択した筆跡。ドラッグで移動');
-for(const corner of ['nw','ne','sw','se','rotate']){const handle=document.createElement('div');handle.className='selection-handle';handle.dataset.selectionHandle=corner;handle.setAttribute('aria-label',corner==='rotate'?'選択を回転':'選択の大きさを変更');if(corner==='rotate')handle.textContent='↻';selectionBox.appendChild(handle);}slideWrapper.appendChild(selectionBox);
+for(const corner of ['nw','ne','sw','se','rotate']){const handle=document.createElement('div');handle.className='selection-handle';handle.dataset.selectionHandle=corner;handle.setAttribute('aria-label',corner==='rotate'?'選択を回転':'選択の大きさを変更');if(corner==='rotate')handle.textContent='↻';selectionBox.appendChild(handle);}selectionLayer.appendChild(selectionBox);
 const selectionActions=document.createElement('div');selectionActions.id='selection-actions';selectionActions.hidden=true;selectionActions.setAttribute('role','toolbar');selectionActions.setAttribute('aria-label','選択した筆跡の操作');
 selectionActions.innerHTML='<button type="button" data-ink-action="cut">切り取り</button><button type="button" data-ink-action="copy">コピー</button><button type="button" data-ink-action="paste">貼り付け</button><button type="button" data-ink-action="duplicate">複製</button><button type="button" data-ink-action="delete">削除</button><button type="button" data-ink-action="style">スタイル</button><button type="button" data-ink-action="done">完了</button>';document.body.appendChild(selectionActions);
 const selectionStyle=document.createElement('section');selectionStyle.id='selection-style';selectionStyle.hidden=true;selectionStyle.setAttribute('role','dialog');selectionStyle.setAttribute('aria-label','選択した筆跡のスタイル');
@@ -69,22 +75,37 @@ const lassoButton=document.createElement('button');lassoButton.type='button';las
 $('btn-line').before(lassoButton);
 lassoButton.addEventListener('click',()=>{finishActiveInput();currentTool='lasso';isLineMode=false;clearInkSelection();updatePenUI();showToast('選びたい筆跡を囲んでください');});
 function selectionPointerActive(){return lassoPointer!==null||selectionDrag!==null;}
+function resetSelectionPreview(){
+  if(selectionFrame!==null){cancelAnimationFrame(selectionFrame);selectionFrame=null;}
+  selectionLayer.style.transform='';
+}
+function restoreSelectionBackground(){
+  if(selectionBackgroundSplit){renderBaseInk(sketchbookStrokes);selectionBackgroundSplit=false;}
+}
 function clearInkSelection(){
   const lassoId=lassoPointer,dragId=selectionDrag?.pointer;lassoPointer=null;lassoArmed=false;
   selectedInk=[];lassoPath=[];selectionDrag=null;selectionBox.hidden=true;selectionActions.hidden=true;selectionStyle.hidden=true;
   if(lassoId!==null&&activeCanvas.hasPointerCapture(lassoId))activeCanvas.releasePointerCapture(lassoId);
   if(dragId!==undefined&&selectionBox.hasPointerCapture(dragId))selectionBox.releasePointerCapture(dragId);
+  resetSelectionPreview();restoreSelectionBackground();
   const ctx=selectionCanvas.getContext('2d');ctx.clearRect(0,0,selectionCanvas.width,selectionCanvas.height);
 }
 function selectedStrokes(){return selectedInk.map(i=>sketchbookStrokes[i]).filter(Boolean);}
 function resizeSelectionCanvas(){
   const w=slideWrapper.clientWidth,h=slideWrapper.clientHeight,density=Math.min((window.devicePixelRatio||1)*(typeof notebookView!=='undefined'?notebookView.scale:1),4,4096/Math.max(1,w,h));
-  selectionCanvas.width=Math.round(w*density);selectionCanvas.height=Math.round(h*density);selectionCanvas.getContext('2d').setTransform(density,0,0,density,0,0);
+  const width=Math.round(w*density),height=Math.round(h*density);
+  if(selectionCanvas.width!==width)selectionCanvas.width=width;
+  if(selectionCanvas.height!==height)selectionCanvas.height=height;
+  selectionCanvas.getContext('2d').setTransform(density,0,0,density,0,0);
 }
 function renderInkSelection(preview=null){
-  resizeSelectionCanvas();const ctx=selectionCanvas.getContext('2d'),w=slideWrapper.clientWidth,h=slideWrapper.clientHeight;
+  resetSelectionPreview();resizeSelectionCanvas();const ctx=selectionCanvas.getContext('2d'),w=slideWrapper.clientWidth,h=slideWrapper.clientHeight;
+  ctx.clearRect(0,0,w,h);
   if(lassoPath.length){ctx.strokeStyle='#6f788d';ctx.lineWidth=1/(typeof notebookView!=='undefined'?notebookView.scale:1);ctx.setLineDash([3,4]);ctx.beginPath();lassoPath.forEach((p,i)=>i?ctx.lineTo(p[0]*w,p[1]*h):ctx.moveTo(p[0]*w,p[1]*h));ctx.stroke();ctx.setLineDash([]);return;}
   const strokes=preview||selectedStrokes();
+  if(selectedInk.length&&!selectionBackgroundSplit){
+    const indices=new Set(selectedInk);renderBaseInk(sketchbookStrokes.filter((_,i)=>!indices.has(i)));selectionBackgroundSplit=true;
+  }
   for(const stroke of strokes){drawStroke(ctx,{...stroke,color:'#80b8ee',opacity:.6,width_ratio:stroke.width_ratio+.004});drawStroke(ctx,stroke);}
   const bounds=InkSelectionGeometry.bounds(strokes);selectionBox.hidden=!bounds;
   if(bounds){selectionBox.style.left=`${bounds.x*100}%`;selectionBox.style.top=`${bounds.y*100}%`;selectionBox.style.width=`${bounds.width*100}%`;selectionBox.style.height=`${bounds.height*100}%`;}
@@ -97,11 +118,19 @@ function positionSelectionToolbar(){
   selectionActions.style.left=`${Math.max(r.left+8,Math.min(r.right-width-8,box.left))}px`;
   selectionActions.style.top=`${Math.max(r.top+8,Math.min(r.bottom-height-8,box.top-height-38))}px`;
 }
-function requestInkEdit(action,extra={}){
+function requestInkEdit(action,extra={},optimistic=false){
   if(selectionRequest||!notebookReady)return false;finishActiveInput();
   const requestId=selectionSession+'_'+(++selectionSequence);selectionRequest=requestId;
+  const original=sketchbookStrokes;
+  selectionPending={requestId,documentId:currentDocumentId,baseRevision:inkRevision,latestSnapshot:null,localMutation:false,optimistic};
+  if(optimistic){
+    const indices=new Set(selectedInk);sketchbookStrokes=sketchbookStrokes.map((s,i)=>indices.has(i)?InkSelectionGeometry.transform(s,extra.matrix,extra.widthScale??1):s);
+  }
   const sent=sendWS({type:'note_ink_edit',documentId:currentDocumentId,baseRevision:inkRevision,requestId,indices:selectedInk.slice(),action,...extra});
-  if(!sent){selectionRequest=null;return false;}renderInkSelection();return true;
+  if(!sent){selectionRequest=null;selectionPending=null;sketchbookStrokes=original;renderAllStrokes(sketchbookStrokes);return false;}
+  $('save-status').textContent='保存中…';
+  if(optimistic){for(const b of selectionActions.querySelectorAll('button'))b.disabled=true;selectionActions.hidden=false;positionSelectionToolbar();}
+  else renderInkSelection();return true;
 }
 function swallowSelectionEvent(e){e.preventDefault();e.stopImmediatePropagation();}
 function lassoNorm(e){const p=getPointerNormPos(e);return [p.normX,p.normY];}
@@ -133,12 +162,13 @@ selectionBox.addEventListener('pointerdown',e=>{
   }
   if(e.pointerType==='pen'&&(!penHasContact(e)||isPenEraser(e))){swallowSelectionEvent(e);return;}
   finishActiveInput();const bounds=InkSelectionGeometry.bounds(selectedStrokes());if(!bounds)return;
-  selectionDrag={pointer:e.pointerId,start:lassoNorm(e),bounds,strokes:structuredClone(selectedStrokes()),handle:e.target.dataset.selectionHandle||'move',matrix:[1,0,0,1,0,0],widthScale:1};
+  renderInkSelection();
+  selectionDrag={pointer:e.pointerId,start:lassoNorm(e),bounds,paperRect:slideWrapper.getBoundingClientRect(),width:slideWrapper.clientWidth,height:slideWrapper.clientHeight,handle:e.target.dataset.selectionHandle||'move',matrix:[1,0,0,1,0,0],widthScale:1};
   selectionBox.setPointerCapture(e.pointerId);selectionActions.hidden=true;selectionStyle.hidden=true;swallowSelectionEvent(e);
 });
 function dragSelection(e){
   if(!selectionDrag||selectionDrag.pointer!==e.pointerId)return;
-  const drag=selectionDrag,p=lassoNorm(e),b=drag.bounds;let m=[1,0,0,1,0,0],scale=1;
+  const drag=selectionDrag,r=drag.paperRect,p=[Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))],b=drag.bounds;let m=[1,0,0,1,0,0],scale=1;
   if(drag.handle==='move'){
     const dx=Math.max(-b.x,Math.min(1-b.x-b.width,p[0]-drag.start[0])),dy=Math.max(-b.y,Math.min(1-b.y-b.height,p[1]-drag.start[1]));m=[1,0,0,1,dx,dy];
   }else if(drag.handle==='rotate'){
@@ -149,17 +179,28 @@ function dragSelection(e){
     scale=Math.max(.1,Math.min(10,Math.hypot((p[0]-anchor.x)*paperAspect,p[1]-anchor.y)/initial));m=[scale,0,0,scale,anchor.x*(1-scale),anchor.y*(1-scale)];
   }
   drag.matrix=m;drag.widthScale=scale;
-  const preview=drag.strokes.map(s=>InkSelectionGeometry.transform(s,m,scale));
-  renderBaseInk(sketchbookStrokes.filter((_,i)=>!selectedInk.includes(i)));renderInkSelection(preview);selectionActions.hidden=true;swallowSelectionEvent(e);
+  if(selectionFrame===null)selectionFrame=requestAnimationFrame(()=>{selectionFrame=null;if(selectionDrag)paintSelectionPreview(selectionDrag);});
+  swallowSelectionEvent(e);
+}
+function paintSelectionPreview(drag){
+  selectionLayer.style.transform=`matrix(${InkSelectionGeometry.cssMatrix(drag.matrix,drag.width,drag.height).join(',')})`;
+}
+function cancelSelectionDrag(){
+  const drag=selectionDrag;selectionDrag=null;resetSelectionPreview();
+  if(drag&&selectionBox.hasPointerCapture(drag.pointer))selectionBox.releasePointerCapture(drag.pointer);
+  restoreSelectionBackground();renderInkSelection();
 }
 selectionBox.addEventListener('pointermove',dragSelection);
 function finishSelectionDrag(e,cancelled=false){
   if(!selectionDrag||selectionDrag.pointer!==e.pointerId)return;
+  if(cancelled){cancelSelectionDrag();swallowSelectionEvent(e);return;}
+  // Pointerup can arrive before either the last pointermove or its RAF paint.
+  dragSelection(e);if(selectionFrame!==null){cancelAnimationFrame(selectionFrame);selectionFrame=null;}
   const drag=selectionDrag;selectionDrag=null;if(selectionBox.hasPointerCapture(e.pointerId))selectionBox.releasePointerCapture(e.pointerId);
-  renderBaseInk(sketchbookStrokes);
+  paintSelectionPreview(drag);
   const changed=drag.matrix.some((value,i)=>Math.abs(value-[1,0,0,1,0,0][i])>1e-7);
-  if(!cancelled&&changed)requestInkEdit('transform',{matrix:drag.matrix,widthScale:drag.widthScale});
-  renderInkSelection();swallowSelectionEvent(e);
+  if(changed)requestInkEdit('transform',{matrix:drag.matrix,widthScale:drag.widthScale},true);
+  else renderInkSelection();swallowSelectionEvent(e);
 }
 selectionBox.addEventListener('pointerup',e=>finishSelectionDrag(e));selectionBox.addEventListener('pointercancel',e=>finishSelectionDrag(e,true));
 selectionBox.addEventListener('lostpointercapture',e=>{if(selectionDrag?.pointer===e.pointerId)finishSelectionDrag(e,true);});
@@ -183,27 +224,59 @@ document.addEventListener('keydown',e=>{
   if((e.ctrlKey||e.metaKey)&&['c','x','v'].includes(e.key.toLowerCase())){e.preventDefault();selectionActions.querySelector(`[data-ink-action="${{c:'copy',x:'cut',v:'paste'}[e.key.toLowerCase()]}"]`).click();}
 });
 const renderBaseInk=renderAllStrokes;
-renderAllStrokes=function(strokes){renderBaseInk(strokes);renderInkSelection();};
+renderAllStrokes=function(strokes){
+  if(selectionDrag)cancelSelectionDrag();
+  const indices=new Set(selectedInk);selectionBackgroundSplit=indices.size>0;
+  renderBaseInk(selectionBackgroundSplit?strokes.filter((_,i)=>!indices.has(i)):strokes);renderInkSelection();
+};
 const updatePenBeforeSelection=updatePenUI;
 updatePenUI=function(){updatePenBeforeSelection();lassoButton.classList.toggle('active',currentTool==='lasso');if(currentTool!=='lasso'&&(selectedInk.length||lassoPointer!==null||selectionDrag))clearInkSelection();};
-const layoutBeforeSelection=adjustLayout;adjustLayout=function(){layoutBeforeSelection();renderInkSelection();};
+const layoutBeforeSelection=adjustLayout;adjustLayout=function(){if(selectionDrag)cancelSelectionDrag();layoutBeforeSelection();renderInkSelection();};
+const sendBeforeSelection=sendWS;
+sendWS=function(message){
+  const sent=sendBeforeSelection(message);
+  // Only stroke_end commits new browser ink. Server-only erases/undo may be
+  // no-ops, so they must not prevent a rejected transform from being restored.
+  if(sent&&selectionPending&&message.type==='stroke_end')selectionPending.localMutation=true;
+  return sent;
+};
 const handleMessageBeforeSelection=handleServerMessage;
 handleServerMessage=function(msg){
   if(msg.type==='note_ink_edit_result'){
-    if(msg.requestId!==selectionRequest)return;selectionRequest=null;
-    if(msg.ok&&msg.documentId===currentDocumentId){inkRevision=msg.inkRevision;if(currentTool==='lasso')selectedInk=msg.indices||[];else clearInkSelection();updatePenUI();renderInkSelection();}
-    else clearInkSelection();return;
+    if(msg.requestId!==selectionRequest)return;
+    const pending=selectionPending,snapshot=pending?.latestSnapshot;selectionRequest=null;selectionPending=null;
+    if(msg.documentId!==currentDocumentId){clearInkSelection();return;}
+    inkRevision=Math.max(inkRevision,msg.inkRevision||0,snapshot?.inkRevision||0);
+    if(pending?.localMutation){clearInkSelection();updatePenUI();return;}
+    if(msg.ok&&(!snapshot||snapshot.inkRevision===msg.inkRevision)){
+      if(snapshot)sketchbookStrokes=snapshot.sketchbookStrokes||snapshot.strokes||[];
+      if(currentTool==='lasso')selectedInk=msg.indices||[];else clearInkSelection();
+      if(pending?.optimistic){updatePenUI();renderInkSelection();}
+      else{renderAllStrokes(sketchbookStrokes);updatePenUI();}
+    }else{
+      clearInkSelection();if(snapshot)handleMessageBeforeSelection(snapshot);else renderAllStrokes(sketchbookStrokes);
+    }return;
   }
   const changedDocument=msg.type==='state_sync'&&msg.documentId!==currentDocumentId;
+  if(msg.type==='strokes_updated'&&msg.documentId&&msg.documentId!==currentDocumentId)return;
+  if(selectionPending&&!changedDocument&&['state_sync','strokes_updated','stroke_undone'].includes(msg.type)){
+    if(!selectionPending.latestSnapshot||msg.inkRevision>=selectionPending.latestSnapshot.inkRevision)selectionPending.latestSnapshot=msg;
+    // Names and paper can still change while ink is awaiting acknowledgement.
+    // Apply that metadata with the browser's current ink, never the old image.
+    if(msg.type==='state_sync')handleMessageBeforeSelection({...msg,sketchbookStrokes});
+    return;
+  }
+  if(selectionPending&&msg.type==='note_saved')return;
+  if(msg.type==='strokes_updated'&&Number.isInteger(msg.inkRevision)&&msg.inkRevision<=inkRevision)return;
   if(Number.isInteger(msg.inkRevision)){
     if(msg.inkRevision!==inkRevision&&!selectionRequest)clearInkSelection();inkRevision=msg.inkRevision;
   }
-  if(changedDocument){selectionRequest=null;clearInkSelection();notebookView.reset();}
-  if(msg.type==='strokes_cleared'){clearInkSelection();selectionRequest=null;}
+  if(changedDocument){selectionRequest=null;selectionPending=null;clearInkSelection();notebookView.reset();}
+  if(msg.type==='strokes_cleared'){clearInkSelection();selectionRequest=null;selectionPending=null;}
   handleMessageBeforeSelection(msg);
   if(changedDocument)refreshNotebookView(true);
 };
-window.addEventListener('blur',()=>{lassoPointer=null;lassoPath=[];selectionDrag=null;renderBaseInk(sketchbookStrokes);renderInkSelection();});
+window.addEventListener('blur',()=>{if(selectionDrag)cancelSelectionDrag();lassoPointer=null;lassoPath=[];restoreSelectionBackground();renderInkSelection();});
 const connectionBeforeSelection=updateAssistantConnection;
-updateAssistantConnection=function(connected){if(!connected){selectionRequest=null;clearInkSelection();}connectionBeforeSelection(connected);};
+updateAssistantConnection=function(connected){if(!connected){selectionRequest=null;selectionPending=null;clearInkSelection();}connectionBeforeSelection(connected);};
 """
