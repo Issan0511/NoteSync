@@ -1,0 +1,314 @@
+"""Transactional notebook library operations and explicit save status.
+
+The window supplies its existing save/status/command methods as ``*_legacy``
+hooks. Keeping this mixin separate lets notebook storage and MCP integrations
+continue to share the same controller and version-1 JSON file.
+"""
+
+from copy import deepcopy
+from datetime import datetime, timezone
+import hashlib
+import json
+import re
+import uuid
+
+
+def _now():
+    return datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+
+def _signature(note):
+    content = {key: value for key, value in note.items() if key not in ('createdAt', 'updatedAt')}
+    return hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True,
+                                     separators=(',', ':')).encode()).hexdigest()
+
+
+def _title(value, default='無題のノート'):
+    if not isinstance(value, str):
+        raise ValueError('ノートの名前を文字で入力してください。')
+    return value.strip()[:120] or default
+
+
+class NotebookLibraryMixin:
+    """Add safe notebook changes without replacing the host's ink/MCP logic.
+
+    Call ``_init_notebook_library`` after loading/importing the store, before the
+    window loads its active note into the controller. It also fills missing
+    metadata on notes subsequently added by an import service.
+    """
+
+    def _init_notebook_library(self):
+        initialized = getattr(self, '_library_initialized', False)
+        stamp = _now()
+        if not initialized:
+            try:
+                stamp = datetime.fromtimestamp(self.store.path.stat().st_mtime, timezone.utc).isoformat(
+                    timespec='milliseconds').replace('+00:00', 'Z')
+            except OSError:
+                pass
+        for note in self.store.notes:
+            if not note.get('createdAt'):
+                note['createdAt'] = stamp
+            if not note.get('updatedAt'):
+                note['updatedAt'] = note['createdAt']
+            note.setdefault('deletedAt', None)
+        if initialized:
+            return
+        live = [note for note in self.store.notes if not note.get('deletedAt')]
+        if not live:
+            note = self.store.new_note()
+            note.update(createdAt=stamp, updatedAt=stamp, deletedAt=None)
+        elif not any(note['id'] == self.store.active_id for note in live):
+            self.store.active_id = live[0]['id']
+        self._library_initialized = True
+        self._library_saved_signatures = {note['id']: _signature(note) for note in self.store.notes}
+        self._library_observed_signatures = dict(self._library_saved_signatures)
+        self._notebook_save_state = 'saved' if self.store.path.exists() else 'dirty'
+        self._notebook_saved_at = stamp if self.store.path.exists() else None
+        self._notebook_save_error = None
+        self._library_save_checkpoints = []
+
+    def _library_broadcast(self, message):
+        server = getattr(self, 'web_server', None)
+        if server is not None:
+            server.broadcast(message)
+
+    def _library_set_save_state(self, state, message=None, *, save_checkpoints=None):
+        self._notebook_save_state = state
+        self._notebook_save_error = message if state == 'error' else None
+        labels = {'dirty': '未保存の変更', 'saving': '保存中…', 'saved': '保存済み',
+                  'error': '保存できません。変更はこの画面に保持しています'}
+        label = getattr(self, 'save_label', None)
+        if label is not None:
+            label.setText(labels[state])
+        payload = {'type': 'note_save_state', 'state': state, 'noteId': self.store.active_id,
+                   'inkRevision': getattr(self.controller, 'ink_revision', 0),
+                   'savedAt': self._notebook_saved_at,
+                   'saveCheckpoints': list(save_checkpoints or [])}
+        if message:
+            payload['message'] = message
+        self._library_broadcast(payload)
+
+    def _library_capture_active(self):
+        note = self.store.active
+        note['strokes'] = self.controller.serialized_ink()
+        if hasattr(self.controller, 'serialized_texts'):
+            note['texts'] = self.controller.serialized_texts()
+
+    def _library_observe_changes(self):
+        changed = False
+        self._init_notebook_library()
+        for note in self.store.notes:
+            signature = _signature(note)
+            if self._library_observed_signatures.get(note['id']) != signature:
+                note['updatedAt'] = _now()
+                self._library_observed_signatures[note['id']] = signature
+                changed = True
+        return changed
+
+    def _ink_changed(self, *args):
+        self._init_notebook_library()
+        self._library_capture_active()
+        if not self._library_observe_changes():
+            return
+        legacy = getattr(self, '_ink_changed_legacy', None)
+        if legacy:
+            legacy(*args)
+        self._library_set_save_state('dirty')
+
+    def _library_saved(self):
+        self._notebook_saved_at = _now()
+        self._library_saved_signatures = {note['id']: _signature(note) for note in self.store.notes}
+        self._library_observed_signatures = dict(self._library_saved_signatures)
+        document_id = self.store.active_id
+        checkpoints = [request_id for note_id, request_id in self._library_save_checkpoints
+                       if note_id == document_id]
+        self._library_set_save_state('saved', save_checkpoints=checkpoints)
+        self._library_broadcast({'type': 'note_saved', 'state': 'saved', 'noteId': self.store.active_id,
+                                 'inkRevision': getattr(self.controller, 'ink_revision', 0),
+                                 'savedAt': self._notebook_saved_at, 'saveCheckpoints': checkpoints})
+        self._library_save_checkpoints = [(note_id, request_id)
+                                          for note_id, request_id in self._library_save_checkpoints
+                                          if note_id != document_id]
+
+    def _library_save_failed(self):
+        message = 'PCへの保存に失敗しました。変更を保持しているので、保存先を確認して再試行してください。'
+        self._library_set_save_state('error', message)
+        self._library_broadcast({'type': 'note_error', 'message': message,
+                                 'noteId': self.store.active_id})
+
+    def save_notebook(self, *args):
+        """Save a snapshot; explicit library actions finish pen gestures first.
+
+        Autosave can run during a long eraser gesture. It must not split that
+        gesture's undo transaction, so input finalization belongs to the action
+        wrapper rather than this timer-compatible method.
+        """
+        self._init_notebook_library()
+        self._library_capture_active()
+        before = deepcopy(self.store.notes)
+        previous_observed = dict(self._library_observed_signatures)
+        self._library_observe_changes()
+        self._library_set_save_state('saving')
+        try:
+            result = self._save_notebook_legacy()
+        except (OSError, ValueError, TypeError):
+            result = False
+        if result is False:
+            self.store.notes = before
+            self._library_observed_signatures = previous_observed
+            self._library_save_failed()
+            return False
+        self._library_saved()
+        return True
+
+    def library_metadata(self):
+        """Return all notes, including recoverable trash, without reading ink files."""
+        self._init_notebook_library()
+        metadata = []
+        for note in self.store.notes:
+            active = note['id'] == self.store.active_id
+            strokes = self.controller.sketchbook_strokes if active else note.get('strokes', [])
+            texts = getattr(self.controller, 'sketchbook_texts', []) if active else note.get('texts', [])
+            metadata.append({'id': note['id'], 'title': note['title'], 'paper': note.get('paper', 'plain'),
+                             'aspect': note.get('aspect', 4 / 3), 'strokeCount': len(strokes),
+                             'textCount': len(texts), 'createdAt': note['createdAt'],
+                             'updatedAt': note['updatedAt'], 'deletedAt': note.get('deletedAt')})
+        return metadata
+
+    def _get_web_status(self):
+        self._init_notebook_library()
+        status = self._get_web_status_legacy()
+        status.update(notes=self.library_metadata(), activeId=self.store.active_id,
+                      saveState=self._notebook_save_state, savedAt=self._notebook_saved_at,
+                      saveError=self._notebook_save_error)
+        return status
+
+    def _library_finish_input(self):
+        self.controller.end_stroke()
+        self._finish_erase()
+        timer = getattr(self, 'save_timer', None)
+        if timer is not None:
+            timer.stop()
+
+    def _library_load_active(self, previous_id):
+        note = self.store.active
+        self._document_id = note['id']
+        self.canvas.aspect = note.get('aspect', 4 / 3)
+        self.canvas.paper = note.get('paper', 'plain')
+        if previous_id != note['id']:
+            if hasattr(self.controller, 'serialized_texts'):
+                self.controller.load_ink(note['strokes'], note.get('texts', []))
+            else:
+                self.controller.load_ink(note['strokes'])
+        self.title_label.setText(note['title'])
+        self.canvas.update()
+
+    def _library_find(self, identifier, *, allow_deleted=False):
+        note = next((note for note in self.store.notes if note['id'] == identifier), None)
+        if note is None or note.get('deletedAt') and not allow_deleted:
+            raise ValueError('ノートが見つかりません。ノート一覧を更新してください。')
+        return note
+
+    def _library_mutate(self, action, data):
+        identifier = data.get('id', self.store.active_id)
+        if action == 'new':
+            self.store.new_note(_title(data.get('title', '新しいノート')))
+        elif action == 'select':
+            self.store.active_id = self._library_find(identifier)['id']
+        elif action == 'duplicate':
+            source = self._library_find(identifier)
+            note = deepcopy(source)
+            stamp = _now()
+            note.update(id=uuid.uuid4().hex, title=_title(data.get('title', source['title'] + ' のコピー')),
+                        createdAt=stamp, updatedAt=stamp, deletedAt=None)
+            note.pop('importTag', None)
+            for item in note.get('texts', []):
+                item['id'] = uuid.uuid4().hex
+            self.store.notes.insert(0, note)
+            self.store.active_id = note['id']
+        elif action == 'trash':
+            note = self._library_find(identifier)
+            note['deletedAt'] = _now()
+            if identifier == self.store.active_id:
+                live = next((candidate for candidate in self.store.notes if not candidate.get('deletedAt')), None)
+                if live is None:
+                    self.store.new_note()
+                else:
+                    self.store.active_id = live['id']
+        elif action == 'restore':
+            note = self._library_find(identifier, allow_deleted=True)
+            if not note.get('deletedAt'):
+                raise ValueError('このノートはゴミ箱に入っていません。')
+            note['deletedAt'] = None
+        elif action == 'rename':
+            self._library_find(identifier)['title'] = _title(data.get('title'))
+        elif action == 'paper' and data.get('paper') in ('plain', 'ruled', 'grid'):
+            self._library_find(identifier)['paper'] = data['paper']
+        else:
+            raise ValueError('このノート操作は利用できません。')
+
+    def _library_result(self, action, data, ok, message=None):
+        result = {'type': 'note_library_result', 'action': action, 'requestId': data.get('requestId'),
+                  'ok': ok, 'activeId': self.store.active_id}
+        if message:
+            result['message'] = message
+        self._library_broadcast(result)
+        self._library_broadcast(dict(self._get_web_status(), type='state_sync'))
+        return ok
+
+    def _on_notebook_command(self, data):
+        if data.get('type') == 'note_save_checkpoint':
+            self._init_notebook_library()
+            request_id = data.get('requestId')
+            if (not isinstance(request_id, str) or re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', request_id) is None
+                    or data.get('documentId') != self.store.active_id):
+                return False
+            checkpoint = (self.store.active_id, request_id)
+            if checkpoint not in self._library_save_checkpoints:
+                self._library_save_checkpoints.append(checkpoint)
+                self._library_save_checkpoints = self._library_save_checkpoints[-64:]
+            self.save_timer.start()
+            return True
+        aliases = {'note_new': 'new', 'note_select': 'select', 'note_title': 'rename',
+                   'note_paper': 'paper', 'note_save': 'save'}
+        kind = data.get('type')
+        if kind == 'note_library':
+            action = data.get('action')
+        elif kind in aliases:
+            action = aliases[kind]
+        else:
+            return self._on_notebook_command_legacy(data)
+        self._init_notebook_library()
+        if action not in ('new', 'select', 'duplicate', 'trash', 'restore', 'rename', 'paper', 'save'):
+            return self._library_result(action, data, False, 'このノート操作は利用できません。')
+        self._library_finish_input()
+        if not self.save_notebook():
+            return self._library_result(action, data, False, self._notebook_save_error)
+        if action == 'save':
+            return self._library_result(action, data, True)
+        previous_id = self.store.active_id
+        previous_notes = deepcopy(self.store.notes)
+        previous_observed = dict(self._library_observed_signatures)
+        try:
+            self._library_mutate(action, data)
+            self._library_observe_changes()
+            self._library_set_save_state('saving')
+            # Persist the candidate library before loading its active note. The
+            # controller still holds the old note until the atomic write works.
+            if self.store.save() is False:
+                raise OSError('notebook storage rejected the write')
+        except (OSError, ValueError, TypeError) as exc:
+            self.store.notes = previous_notes
+            self.store.active_id = previous_id
+            self._library_observed_signatures = previous_observed
+            if isinstance(exc, OSError):
+                self._library_save_failed()
+                message = self._notebook_save_error
+            else:
+                self._library_set_save_state('saved')
+                message = str(exc)
+            return self._library_result(action, data, False, message)
+        self._library_load_active(previous_id)
+        self._library_saved()
+        return self._library_result(action, data, True)

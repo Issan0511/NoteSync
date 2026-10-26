@@ -422,7 +422,7 @@ class WebServer:
                             if not ai_task or ai_task.done():
                                 ai_session.update(context=None, history=[])
                         else:
-                            self._handle_client_message(data)
+                            self._handle_client_message(data, websocket)
 
                 except (websockets.exceptions.ConnectionClosed, ConnectionResetError, BrokenPipeError):
                     pass
@@ -439,7 +439,7 @@ class WebServer:
             async def main_ws():
                 for port in range(self.ws_port, self.ws_port + 10):
                     try:
-                        async with websockets.serve(ws_handler, "0.0.0.0", port, max_size=5 * 1024 * 1024):
+                        async with websockets.serve(ws_handler, "0.0.0.0", port, max_size=16 * 1024 * 1024):
                             self.ws_port = port
                             SlideRequestHandler.ws_port = port
                             await asyncio.Future()
@@ -496,9 +496,13 @@ class WebServer:
                 "message": "回答の取得に失敗しました。再接続してお試しください。",
             }))
 
-    def _handle_client_message(self, data: dict):
+    def _handle_client_message(self, data: dict, reply_client=None):
         msg_type = data.get("type")
-        if msg_type in ('note_new', 'note_select', 'note_title', 'note_paper', 'note_save', 'note_ink_edit'):
+        if msg_type == 'note_file':
+            payload = dict(data)
+            payload['_reply_client'] = reply_client
+            self.bridge.notebook_command.emit(payload)
+        elif msg_type in ('note_new', 'note_select', 'note_title', 'note_paper', 'note_save', 'note_ink_edit', 'note_library', 'note_save_checkpoint'):
             self.bridge.notebook_command.emit(data)
         elif msg_type == 'erase_start':
             self.bridge.erase_started.emit()
@@ -566,6 +570,21 @@ class WebServer:
             self.bridge.sketch_visibility_command.emit(bool(data.get("visible", True)))
         elif msg_type == "save_sketch":
             self.bridge.save_sketch_requested.emit()
+
+    def reply_to(self, client, message_dict: dict):
+        """Return a download to its requesting device, never broadcast files."""
+        if client is None or not self.ws_loop:
+            return
+        payload = json.dumps(message_dict)
+
+        async def _send():
+            if client.state == State.OPEN:
+                try:
+                    await client.send(payload)
+                except (websockets.exceptions.ConnectionClosed, ConnectionResetError):
+                    pass
+
+        asyncio.run_coroutine_threadsafe(_send(), self.ws_loop)
 
     def broadcast(self, message_dict: dict):
         """全接続クライアント（iPad）へメッセージをブロードキャスト"""

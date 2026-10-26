@@ -6,6 +6,8 @@ from beamerplus.TabletNavigation import NAVIGATION_SCRIPT, NAVIGATION_STYLE
 from beamerplus.TabletSelection import SELECTION_SCRIPT, SELECTION_STYLE
 from beamerplus.TabletFavorites import FAVORITES_SCRIPT, FAVORITES_STYLE
 from beamerplus.TabletEraserCursor import ERASER_CURSOR_SCRIPT
+from beamerplus.TabletLibrary import LIBRARY_SCRIPT, LIBRARY_STYLE
+from beamerplus.TabletMenus import MENUS_SCRIPT, MENUS_STYLE
 
 
 ICONS = {
@@ -227,11 +229,14 @@ SCRIPT = r"""
     __SELECTION_SCRIPT__
     __FAVORITES_SCRIPT__
     __ERASER_CURSOR_SCRIPT__
+    __LIBRARY_SCRIPT__
+    __MENUS_SCRIPT__
     updatePenUI();setHistory({canUndo:false,canRedo:false});adjustLayout();connectWS();
     window.addEventListener('resize',adjustLayout);window.visualViewport?.addEventListener('resize',adjustLayout);
 """
 
-NOTEBOOK_HTML = (f'<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>BeamerPlus Notes</title><style>{ASSISTANT_STYLE}{STYLE}{NAVIGATION_STYLE}{SELECTION_STYLE}{FAVORITES_STYLE}</style></head><body>{MARKUP}{ASSISTANT_MARKUP}<script>'
+NOTEBOOK_HTML = (f'<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>BeamerPlus Notes</title><style>{ASSISTANT_STYLE}{STYLE}{NAVIGATION_STYLE}{SELECTION_STYLE}{FAVORITES_STYLE}{LIBRARY_STYLE}{MENUS_STYLE}</style></head><body>{MARKUP}{ASSISTANT_MARKUP}<script>'
                  + SCRIPT.replace('__INPUT_SCRIPT__', INPUT_SCRIPT).replace('__ASSISTANT_SCRIPT__', ASSISTANT_SCRIPT)
                  .replace('__NAVIGATION_SCRIPT__', NAVIGATION_SCRIPT).replace('__SELECTION_SCRIPT__', SELECTION_SCRIPT)
-                 .replace('__FAVORITES_SCRIPT__', FAVORITES_SCRIPT).replace('__ERASER_CURSOR_SCRIPT__', ERASER_CURSOR_SCRIPT) + '</script></body></html>')
+                 .replace('__FAVORITES_SCRIPT__', FAVORITES_SCRIPT).replace('__ERASER_CURSOR_SCRIPT__', ERASER_CURSOR_SCRIPT)
+                 .replace('__LIBRARY_SCRIPT__', LIBRARY_SCRIPT).replace('__MENUS_SCRIPT__', MENUS_SCRIPT) + '</script></body></html>')

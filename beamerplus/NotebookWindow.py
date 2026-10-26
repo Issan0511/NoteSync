@@ -12,6 +12,8 @@ from PySide6.QtWidgets import QMainWindow, QToolBar, QPushButton, QLabel, QFileD
 
 from beamerplus.MainWindow import MainWindow
 from beamerplus.NotebookModel import NotebookController, NotebookStore
+from beamerplus.NotebookLibrary import NotebookLibraryMixin
+from beamerplus.NotebookFiles import NotebookFilesMixin
 from beamerplus.SlideCanvas import SlideCanvas
 from beamerplus.DrawingModel import paint_ink
 from beamerplus.WebServer import WebBridge, WebServer
@@ -35,7 +37,7 @@ class NotebookCanvas(SlideCanvas):
         painter.end()
 
 
-class NotebookWindow(MainWindow):
+class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
     def __init__(self, store_path=None, import_state=None, http_port=8080, ws_port=8765):
         QMainWindow.__init__(self)
         self.setWindowTitle('BeamerPlus Notes')
@@ -50,6 +52,7 @@ class NotebookWindow(MainWindow):
         self.store = NotebookStore(path)
         if import_state:
             self.store.import_ink(import_state.get('sketchbookStrokes', []) or import_state.get('strokes', []))
+        self._init_notebook_library()
         self._document_id = self.store.active_id
         self.canvas = NotebookCanvas(self.controller)
         self.canvas.aspect = self.store.active.get('aspect', 4 / 3)
@@ -113,22 +116,24 @@ class NotebookWindow(MainWindow):
     def _tb_btn_style(self):
         return 'QPushButton {padding:8px 12px;border:1px solid #ddd;border-radius:8px;background:white;color:#24262b;}'
 
-    def _ink_changed(self, *args):
+    def _ink_changed_legacy(self, *args):
         self.save_label.setText('保存中…')
         self.save_timer.start()
 
-    def save_notebook(self):
+    def _save_notebook_legacy(self):
         self.store.active['strokes'] = self.controller.serialized_ink()
         try:
             self.store.save()
             self.save_label.setText('保存済み')
             self.web_server.broadcast({'type': 'note_saved', 'noteId': self.store.active_id})
             self.web_server.broadcast({'type': 'note_history', 'canUndo': bool(self.controller.undo_stack or self.controller.pending_edit is not None), 'canRedo': bool(self.controller.redo_stack)})
+            return True
         except OSError:
             self.save_label.setText('保存できません。保存先を確認してください')
             self.web_server.broadcast({'type': 'note_error', 'message': 'PCへの保存に失敗しました。保存先を確認してください。'})
+            return False
 
-    def _on_notebook_command(self, data):
+    def _on_notebook_command_legacy(self, data):
         kind = data.get('type')
         if kind == 'note_ink_edit':
             self._on_ink_edit(data)
@@ -185,8 +190,13 @@ class NotebookWindow(MainWindow):
         self.web_server.broadcast({'type': 'note_ink_edit_result', 'ok': True,
                                    'documentId': self.store.active_id, 'inkRevision': self.controller.ink_revision,
                                    'requestId': data.get('requestId'), 'indices': indices})
+        # No-op edits still need the final saved acknowledgement after the
+        # tablet has shown a local pending state. Keep disk work off this slot.
+        timer = getattr(self, 'save_timer', None)
+        if timer is not None:
+            timer.start()
 
-    def _get_web_status(self):
+    def _get_web_status_legacy(self):
         return {'documentId': self.store.active_id, 'noteId': self.store.active_id,
                 'inkRevision': self.controller.ink_revision,
                 'paperAspect': self.store.active.get('aspect', 4 / 3),
@@ -221,10 +231,14 @@ class NotebookWindow(MainWindow):
         self.controller.begin_edit()
 
     def _finish_erase(self):
+        needs_save_ack = (self._web_erase_active or self.erase_timer.isActive()
+                          or self.controller.pending_edit is not None)
         self._web_erase_active = False
         self.erase_timer.stop()
         self.controller.finish_edit()
         self.web_server.broadcast({'type': 'note_history', 'canUndo': bool(self.controller.undo_stack), 'canRedo': bool(self.controller.redo_stack)})
+        if needs_save_ack:
+            self.save_timer.start()
 
     def _finalize_disconnected_ink(self, count):
         if count == 0:
@@ -258,7 +272,9 @@ class NotebookWindow(MainWindow):
     def closeEvent(self, event):
         self.controller.end_stroke()
         self._finish_erase()
-        self.save_notebook()
+        if not self.save_notebook():
+            event.ignore()
+            return
         self.web_server.stop()
         QMainWindow.closeEvent(self, event)
 
