@@ -39,7 +39,7 @@ function harness(){
       {id:'a',title:'Algebra',paper:'grid',createdAt:'2026-10-25T00:00:00Z',updatedAt:'2026-10-26T01:00:00Z',strokeCount:12,textCount:2},
       {id:'b',title:'Biology',paper:'ruled',createdAt:'2026-10-24T00:00:00Z',updatedAt:'2026-10-25T01:00:00Z',strokeCount:4,textCount:0},
       {id:'c',title:'Chemistry',paper:'plain',createdAt:'2026-10-23T00:00:00Z',updatedAt:'2026-10-26T02:00:00Z',deletedAt:'2026-10-26T02:00:00Z',strokeCount:3,textCount:1}
-    ],currentDocumentId='a',notebookReady=true;
+    ],currentDocumentId='a',currentNotebookId='a',notebookReady=true;
     function finishActiveInput(){events.push('finish');}
     function flushNotebookTitle(){events.push('flush');}
     function showToast(message){toasts.push(message);}
@@ -47,7 +47,7 @@ function harness(){
     function openOverlay(id){closeOverlays();$(id).hidden=false;}
     function renderNotes(){}
     function sendWS(message){if(!notebookReady)return false;events.push('send:'+message.type);sent.push(structuredClone(message));return true;}
-    function handleServerMessage(msg){if(msg.type==='state_sync'){if(msg.notes)notes=structuredClone(msg.notes);currentDocumentId=msg.documentId||currentDocumentId;renderNotes();}}
+    function handleServerMessage(msg){if(msg.type==='state_sync'){if(msg.notes)notes=structuredClone(msg.notes);currentDocumentId=msg.documentId||currentDocumentId;currentNotebookId=msg.notebookId||msg.documentId||currentNotebookId;renderNotes();}}
     function updateAssistantConnection(connected){notebookReady=connected;}
     $('library-overlay').hidden=true;
   `,context);
@@ -128,4 +128,28 @@ test('offline navigation keeps the library open and provides a retry message',()
 test('view/sort changes persist in the browser without affecting note data',()=>{
   const h=harness();h.click('library-list');h.run("$('library-sort').value='title';$('library-sort').dispatch('change')");
   assert.equal(h.read("stored.get('beamerplus_library_view')"),'list');assert.equal(h.read("stored.get('beamerplus_library_sort')"),'title');assert.equal(h.read("$('notebook-list').classes.has('library-list-view')"),true);
+});
+
+test('the current notebook card stays marked while a later page has its own document ID',()=>{
+  const h=harness();h.run("notes=[{id:'bookA',title:'Algebra',paper:'grid'},{id:'bookB',title:'Biology',paper:'plain'}];currentDocumentId='page2';currentNotebookId='bookA'");h.click('open-library');
+  assert.equal(h.read('notebookLibraryCurrentId()'),'bookA');
+  assert.equal(h.read("$('notebook-list').children.find(card=>card.dataset.noteId==='bookA').classes.has('current')"),true);
+  assert.equal(h.read("$('notebook-list').children.find(card=>card.dataset.noteId==='bookB').classes.has('current')"),false);
+  assert.equal(h.read("$('notebook-list').children.find(card=>card.dataset.noteId==='bookA').children[0].children.some(child=>child.className==='library-current-badge')"),true);
+});
+
+test('selecting a notebook completes when its active page ID differs from its notebook ID',()=>{
+  const h=harness();h.run("notes=[{id:'bookA',title:'Algebra'},{id:'bookB',title:'Biology'}];currentDocumentId='page2';currentNotebookId='bookA'");h.click('open-library');
+  h.run("$('notebook-list').children.find(card=>card.dataset.noteId==='bookB').children[0].dispatch('click')");assert.deepEqual(h.read('sent.at(-1)'),{type:'note_select',id:'bookB'});
+  h.message({type:'state_sync',documentId:'pageB2',notebookId:'bookB'});
+  assert.equal(h.read('currentDocumentId'),'pageB2');assert.equal(h.read('currentNotebookId'),'bookB');assert.equal(h.read('notebookLibraryPending'),null);assert.equal(h.read("$('library-overlay').hidden"),true);
+  assert.equal(h.read("$('notebook-list').children.find(card=>card.dataset.noteId==='bookB').classes.has('current')"),true);
+});
+
+test('new-notebook navigation cannot mistake another page of an existing notebook for a new notebook',()=>{
+  const h=harness();h.run("notes=[{id:'bookA',title:'Algebra'},{id:'bookB',title:'Biology'}];currentDocumentId='page2';currentNotebookId='bookA'");h.click('open-library');h.click('new-note');
+  h.message({type:'state_sync',documentId:'page3',notebookId:'bookA'});assert.notEqual(h.read('notebookLibraryPending'),null);assert.equal(h.read("$('library-overlay').hidden"),false);
+  h.message({type:'state_sync',documentId:'pageB2',notebookId:'bookB'});assert.notEqual(h.read('notebookLibraryPending'),null);assert.equal(h.read("$('library-overlay').hidden"),false);
+  h.message({type:'state_sync',documentId:'pageD2',notebookId:'bookD',notes:[{id:'bookA',title:'Algebra'},{id:'bookB',title:'Biology'},{id:'bookD',title:'New notebook'}]});
+  assert.equal(h.read('notebookLibraryPending'),null);assert.equal(h.read("$('library-overlay').hidden"),true);assert.equal(h.read('notebookLibraryCurrentId()'),'bookD');
 });

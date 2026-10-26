@@ -69,6 +69,9 @@ def _clipboard_stroke(data):
 
 
 class NotebookStore:
+    PAGE_FIELDS = ('strokes', 'texts', 'paper', 'aspect')
+    MAX_PAGES = 1000
+
     def __init__(self, path):
         self.path = Path(path)
         self.notes = []
@@ -78,14 +81,17 @@ class NotebookStore:
             if data.get('version') != 1 or not isinstance(data.get('notes'), list):
                 raise ValueError('ノート保存ファイルの形式を確認してください')
             self.notes = data['notes']
+            note_ids, page_ids = set(), set()
             for note in self.notes:
-                if not isinstance(note.get('id'), str) or not isinstance(note.get('strokes'), list):
+                if not isinstance(note, dict) or not isinstance(note.get('id'), str) or not note['id'] or note['id'] in note_ids:
                     raise ValueError('ノート保存ファイルの形式を確認してください')
-                for stroke in note['strokes']:
-                    Stroke(**stroke)
-                if not isinstance(note.get('texts', []), list):
-                    raise ValueError('ノートの文字データを確認してください')
-                note['texts'] = [asdict(prepare_text(item, note.get('aspect', 4 / 3))) for item in note.get('texts', [])]
+                note_ids.add(note['id'])
+                for page in self.ensure_pages(note):
+                    if page['id'] in page_ids:
+                        raise ValueError('ノートのページ識別子が重複しています')
+                    page_ids.add(page['id'])
+                    self._validate_page(page)
+                self._mirror_page(note, self._page_for_note(note))
             self.active_id = data.get('activeId')
         if not self.notes:
             self.new_note()
@@ -96,13 +102,119 @@ class NotebookStore:
     def active(self):
         return next(note for note in self.notes if note['id'] == self.active_id)
 
+    def ensure_pages(self, note):
+        """Migrate a legacy flat note without replacing an edited flat mirror.
+
+        A page already present in a live note is authoritative when loading, but
+        callers may replace the flat ink between saves. Merely looking up pages
+        must therefore not copy old page ink over those unsaved edits.
+        """
+        if 'pages' not in note:
+            if not isinstance(note.get('strokes'), list):
+                raise ValueError('ノート保存ファイルの筆跡を確認してください')
+            page = {'id': note['id'], 'strokes': note['strokes'], 'texts': note.get('texts', []),
+                    'paper': note.get('paper', 'plain'), 'aspect': note.get('aspect', 4 / 3)}
+            note['pages'] = [page]
+            note['activePageId'] = page['id']
+            self._mirror_page(note, page)
+        pages = note['pages']
+        if not isinstance(pages, list) or not 1 <= len(pages) <= self.MAX_PAGES:
+            raise ValueError('ノートのページ一覧を確認してください')
+        identifiers = set()
+        for page in pages:
+            if (not isinstance(page, dict) or not isinstance(page.get('id'), str)
+                    or not page['id'] or page['id'] in identifiers):
+                raise ValueError('ノートのページ識別子を確認してください')
+            if not isinstance(page.get('strokes'), list):
+                raise ValueError('ページの筆跡データを確認してください')
+            identifiers.add(page['id'])
+            page.setdefault('texts', [])
+            page.setdefault('paper', note.get('paper', 'plain'))
+            page.setdefault('aspect', note.get('aspect', 4 / 3))
+        if note.get('activePageId') not in identifiers:
+            note['activePageId'] = pages[0]['id']
+            self._mirror_page(note, pages[0])
+        return pages
+
+    @staticmethod
+    def _mirror_page(note, page):
+        for field in NotebookStore.PAGE_FIELDS:
+            note[field] = page[field]
+
+    def _page_for_note(self, note):
+        return next(page for page in self.ensure_pages(note) if page['id'] == note['activePageId'])
+
+    @property
+    def active_page(self):
+        return self._page_for_note(self.active)
+
+    def sync_active_page(self, note=None):
+        note = self.active if note is None else note
+        page = self._page_for_note(note)
+        for field in self.PAGE_FIELDS:
+            page[field] = note.get(field, page[field])
+        self._mirror_page(note, page)
+        return page
+
+    def select_page(self, page_id):
+        note = self.active
+        target = next((page for page in self.ensure_pages(note) if page['id'] == page_id), None)
+        if target is None:
+            raise ValueError('ページが見つかりません。ノートを読み直してください。')
+        self.sync_active_page(note)
+        note['activePageId'] = target['id']
+        self._mirror_page(note, target)
+        return target
+
+    def new_page(self):
+        note = self.active
+        current = self.sync_active_page(note)
+        if len(note['pages']) >= self.MAX_PAGES:
+            raise ValueError('これ以上ページを追加できません。新しいノートを作ってください。')
+        page = {'id': uuid.uuid4().hex, 'strokes': [], 'texts': [],
+                'paper': current['paper'], 'aspect': current['aspect']}
+        note['pages'].append(page)
+        note['activePageId'] = page['id']
+        self._mirror_page(note, page)
+        return page
+
+    @staticmethod
+    def _validate_page(page):
+        if not isinstance(page.get('strokes'), list) or not isinstance(page.get('texts'), list):
+            raise ValueError('ページの筆跡・文字データを確認してください')
+        if page['paper'] not in ('plain', 'ruled', 'grid'):
+            raise ValueError('ページの用紙設定を確認してください')
+        _finite_number(page['aspect'], .4, 2.5)
+        for raw in page['strokes']:
+            if not isinstance(raw, dict):
+                raise ValueError('ページの筆跡データを確認してください')
+            try:
+                stroke = Stroke(**raw)
+            except TypeError as exc:
+                raise ValueError('ページの筆跡データを確認してください') from exc
+            _finite_number(stroke.width_ratio, .0001, .8)
+            _finite_number(stroke.opacity, 0, 1)
+            if not isinstance(stroke.color, str) or not isinstance(stroke.points, (tuple, list)):
+                raise ValueError('ページの筆跡データを確認してください')
+            for point in stroke.points:
+                if not isinstance(point, (tuple, list)) or len(point) not in (2, 3):
+                    raise ValueError('ページの筆跡データを確認してください')
+                _finite_number(point[0], -4, 5)
+                _finite_number(point[1], -4, 5)
+                if len(point) == 3:
+                    _finite_number(point[2], 0, 1)
+        page['texts'] = [asdict(prepare_text(item, page['aspect'])) for item in page['texts']]
+
     def new_note(self, title='新しいノート'):
         note = {'id': uuid.uuid4().hex, 'title': title[:120], 'paper': 'plain', 'aspect': 4 / 3, 'strokes': [], 'texts': []}
+        self.ensure_pages(note)
         self.notes.insert(0, note)
         self.active_id = note['id']
         return note
 
     def save(self):
+        for note in self.notes:
+            self.sync_active_page(note)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         content = json.dumps({'version': 1, 'activeId': self.active_id, 'notes': self.notes}, ensure_ascii=False)
         temporary = None
@@ -123,11 +235,13 @@ class NotebookStore:
         tag = hashlib.sha256(json.dumps(strokes, sort_keys=True).encode()).hexdigest()
         if any(note.get('importTag') == tag for note in self.notes):
             return
-        if len(self.notes) == 1 and not self.notes[0]['strokes'] and self.notes[0]['title'] == '新しいノート':
+        if (len(self.notes) == 1 and not self.notes[0]['strokes'] and not self.notes[0].get('texts')
+                and len(self.ensure_pages(self.notes[0])) == 1 and self.notes[0]['title'] == '新しいノート'):
             note = self.active
         else:
             note = self.new_note()
         note.update(title='引き継いだノート', strokes=strokes, aspect=aspect, importTag=tag)
+        self.sync_active_page(note)
 
 
 class NotebookController(PresentationController):

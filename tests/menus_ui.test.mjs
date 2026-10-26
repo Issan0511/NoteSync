@@ -48,7 +48,7 @@ function harness(){
     function setTimeout(fn,delay){const id=++timerSequence;timers.set(id,{fn,delay});return id;}
     function clearTimeout(id){timers.delete(id);}
     function flushTimers(){const callbacks=[...timers.values()];timers.clear();for(const {fn} of callbacks)fn();}
-    let notes=[{id:'a',title:'Algebra',paper:'grid'},{id:'b',title:'Biology',paper:'plain'}],currentDocumentId='a',notebookReady=true,titleTimer=null,isDrawing=false,inkPointerId=null,selectionRequest=null;
+    let notes=[{id:'a',title:'Algebra',paper:'grid'},{id:'b',title:'Biology',paper:'plain'}],currentDocumentId='a',currentNotebookId='a',notebookReady=true,titleTimer=null,isDrawing=false,inkPointerId=null,selectionRequest=null;
     $('note-title').value='Algebra';$('library-overlay').hidden=true;
     function finishActiveInput(){events.push('finish');}
     function showToast(message){toasts.push(message);}
@@ -57,7 +57,7 @@ function harness(){
     function renderNotes(){}
     function sendWS(message){if(!canSend||!notebookReady)return false;events.push('send:'+message.type);sent.push(structuredClone(message));return true;}
     function handleServerMessage(message){
-      if(message.type==='state_sync'){if(message.notes)notes=structuredClone(message.notes);currentDocumentId=message.documentId||currentDocumentId;renderNotes();}
+      if(message.type==='state_sync'){if(message.notes)notes=structuredClone(message.notes);currentDocumentId=message.documentId||currentDocumentId;currentNotebookId=message.notebookId||message.documentId||currentNotebookId;renderNotes();}
       else if(message.type==='note_ink_edit_result'&&message.requestId===selectionRequest)selectionRequest=null;
     }
     function updateAssistantConnection(connected){notebookReady=connected;}
@@ -184,4 +184,30 @@ test('disconnect clears the required checkpoint and deferred ACK before a new co
   h.run("sendWS({type:'redo'})");const nextCheckpoint=h.checkpoint();assert.notEqual(nextCheckpoint,oldCheckpoint);
   h.saved({saveCheckpoints:[oldCheckpoint]});assert.equal(h.read('notebookSaveState'),'dirty');
   h.acknowledgeCheckpoint();assert.equal(h.read('notebookSaveState'),'saved');
+});
+
+test('title flush on a later page edits the notebook title while its checkpoint targets that page',()=>{
+  const h=harness();h.sync({documentId:'page2',notebookId:'bookA',notes:[{id:'bookA',title:'Book title'},{id:'bookB',title:'Other book'}]});
+  h.run("$('note-title').value='Book title';flushNotebookTitle()");assert.equal(h.read('sent.length'),0,'an unchanged notebook title needs no write');
+  h.run("$('note-title').value='Edited book title';flushNotebookTitle()");
+  assert.deepEqual(h.read('sent[0]'),{type:'note_title',id:'bookA',title:'Edited book title'});assert.equal(h.read('sent[1].type'),'note_save_checkpoint');assert.equal(h.read('sent[1].documentId'),'page2');
+});
+
+test('renaming from a later page opens and submits the containing notebook title',()=>{
+  const h=harness();h.sync({documentId:'page2',notebookId:'bookA',notes:[{id:'bookA',title:'Book title'}]});h.run("$('note-title').value='Book title';$('menu-rename').dispatch('click')");
+  assert.equal(h.read('notebookLibraryRenameId'),'bookA');assert.equal(h.read("$('library-rename-title').value"),'Book title');
+  h.run("$('library-rename-title').value='Renamed book';$('library-rename-form').dispatch('submit')");
+  const request=h.read("sent.findLast(message=>message.type==='note_library')");assert.equal(request.action,'rename');assert.equal(request.id,'bookA');assert.equal(request.title,'Renamed book');
+});
+
+for(const action of ['duplicate','trash'])test(`${action} from a later page targets the containing notebook`,()=>{
+  const h=harness();h.sync({documentId:'page2',notebookId:'bookA',notes:[{id:'bookA',title:'Book title'}]});h.run(`$('note-title').value='Book title';$('menu-${action}').dispatch('click')`);
+  const request=h.read("sent.findLast(message=>message.type==='note_library')");assert.equal(request.action,action);assert.equal(request.id,'bookA');assert.equal(h.read('currentDocumentId'),'page2');
+});
+
+test('switching notebooks from a later page flushes the old notebook title before selecting the new notebook',()=>{
+  const h=harness();h.sync({documentId:'page2',notebookId:'bookA',notes:[{id:'bookA',title:'Book title'},{id:'bookB',title:'Other book'}]});
+  h.run("$('note-title').value='Updated old notebook';beginNotebookLibraryNavigation('select','bookB')");
+  assert.deepEqual(h.read("sent.filter(message=>message.type!=='note_save_checkpoint')"),[{type:'note_title',id:'bookA',title:'Updated old notebook'},{type:'note_select',id:'bookB'}]);
+  assert.equal(h.read('sent[1].documentId'),'page2');h.message({type:'state_sync',documentId:'pageB2',notebookId:'bookB',saveState:'saved'});assert.equal(h.read('notebookLibraryPending'),null);assert.equal(h.read('currentNotebookId'),'bookB');
 });

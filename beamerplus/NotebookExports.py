@@ -7,6 +7,7 @@ validated notes to their store. Importing never replaces an existing note.
 from dataclasses import asdict
 from datetime import datetime, timezone
 import json
+from itertools import chain
 import math
 import re
 import unicodedata
@@ -27,6 +28,7 @@ except ModuleNotFoundError as exc:
 
 MAX_BACKUP_BYTES = 10 * 1024 * 1024
 MAX_NOTES = 200
+MAX_PAGES = 1000
 MAX_STROKES = 50_000
 MAX_POINTS = 500_000
 MAX_TEXTS_PER_NOTE = 200
@@ -104,41 +106,71 @@ def _stroke(data, budget):
             'opacity': _number(data.get('opacity'), .05, 1), 'points': points}
 
 
+def _page_content(raw, budget):
+    if not isinstance(raw, dict):
+        raise ValueError('ノートのページ形式が正しくありません。')
+    budget['pages'] += 1
+    if budget['pages'] > MAX_PAGES:
+        raise ValueError('バックアップは合計1000ページまでです。ノートを分けて保存してください。')
+    aspect = _number(raw.get('aspect', 4 / 3), .4, 2.5)
+    paper = raw.get('paper', 'plain')
+    if paper not in ('plain', 'ruled', 'grid'):
+        raise ValueError('ノートの用紙設定が正しくありません。')
+    strokes, texts = raw.get('strokes'), raw.get('texts', [])
+    if not isinstance(strokes, list) or not isinstance(texts, list) or len(texts) > MAX_TEXTS_PER_NOTE:
+        raise ValueError('ノートの筆跡・文字データが正しくありません。')
+    if texts and _prepare_text is None:
+        raise ValueError('このバージョンでは文字入りノートを読み書きできません。文字機能のあるバージョンを使用してください。')
+    budget['texts'] += len(texts)
+    if budget['texts'] > MAX_TEXTS:
+        raise ValueError('バックアップの文字が多すぎます。ノートを分けて保存してください。')
+    content = {'paper': paper, 'aspect': aspect,
+               'strokes': [_stroke(item, budget) for item in strokes], 'texts': []}
+    for raw_text in texts:
+        if not isinstance(raw_text, dict):
+            raise ValueError('ノートの文字データが正しくありません。')
+        text = raw_text.get('text')
+        if isinstance(text, str) and any(unicodedata.category(char) == 'Cs' for char in text):
+            raise ValueError('ノートの文字データが正しくありません。')
+        # Whitelisting prevents auxiliary API/MCP fields and private paths
+        # from leaking into exported JSON even if a caller supplies them.
+        allowed = {key: raw_text[key] for key in ('id', 'text', 'norm_x', 'norm_y', 'size', 'color', 'format') if key in raw_text}
+        try:
+            content['texts'].append(asdict(_prepare_text(allowed, aspect)))
+        except (TypeError, OverflowError) as exc:
+            raise ValueError('ノートの文字データが正しくありません。') from exc
+    return content
+
+
+def _mirror_active_page(note):
+    active = next(page for page in note['pages'] if page['id'] == note['activePageId'])
+    note.update({key: active[key] for key in ('paper', 'aspect', 'strokes', 'texts')})
+
+
 def _notes(data):
     if not isinstance(data, (list, tuple)) or not 1 <= len(data) <= MAX_NOTES:
         raise ValueError('バックアップは1〜200冊のノートで指定してください。')
-    result, budget = [], {'points': 0, 'strokes': 0, 'texts': 0}
+    result, budget = [], {'points': 0, 'strokes': 0, 'texts': 0, 'pages': 0}
     for raw in data:
         if not isinstance(raw, dict):
             raise ValueError('ノートの形式が正しくありません。')
-        identifier = _identifier(raw.get('id'))
-        aspect = _number(raw.get('aspect', 4 / 3), .4, 2.5)
-        paper = raw.get('paper', 'plain')
-        if paper not in ('plain', 'ruled', 'grid'):
-            raise ValueError('ノートの用紙設定が正しくありません。')
-        strokes, texts = raw.get('strokes'), raw.get('texts', [])
-        if not isinstance(strokes, list) or not isinstance(texts, list) or len(texts) > MAX_TEXTS_PER_NOTE:
-            raise ValueError('ノートの筆跡・文字データが正しくありません。')
-        if texts and _prepare_text is None:
-            raise ValueError('このバージョンでは文字入りノートを読み書きできません。文字機能のあるバージョンを使用してください。')
-        budget['texts'] += len(texts)
-        if budget['texts'] > MAX_TEXTS:
-            raise ValueError('バックアップの文字が多すぎます。ノートを分けて保存してください。')
-        note = {'id': identifier, 'title': _title(raw.get('title')), 'paper': paper,
-                'aspect': aspect, 'strokes': [_stroke(item, budget) for item in strokes], 'texts': []}
-        for raw_text in texts:
-            if not isinstance(raw_text, dict):
-                raise ValueError('ノートの文字データが正しくありません。')
-            text = raw_text.get('text')
-            if isinstance(text, str) and any(unicodedata.category(char) == 'Cs' for char in text):
-                raise ValueError('ノートの文字データが正しくありません。')
-            # Whitelisting prevents auxiliary API/MCP fields and private paths
-            # from leaking into exported JSON even if a caller supplies them.
-            allowed = {key: raw_text[key] for key in ('id', 'text', 'norm_x', 'norm_y', 'size', 'color', 'format') if key in raw_text}
-            try:
-                note['texts'].append(asdict(_prepare_text(allowed, aspect)))
-            except (TypeError, OverflowError) as exc:
-                raise ValueError('ノートの文字データが正しくありません。') from exc
+        note = {'id': _identifier(raw.get('id')), 'title': _title(raw.get('title'))}
+        if 'pages' in raw:
+            pages = raw['pages']
+            if not isinstance(pages, list) or not pages or len(pages) > MAX_PAGES:
+                raise ValueError('ノートのページ一覧が正しくありません。')
+            note['pages'] = []
+            for page in pages:
+                content = _page_content(page, budget)
+                content['id'] = _identifier(page.get('id'))
+                note['pages'].append(content)
+            active = raw.get('activePageId', note['pages'][0]['id'])
+            if not isinstance(active, str) or not any(page['id'] == active for page in note['pages']):
+                raise ValueError('ノートで選択されているページが見つかりません。')
+            note['activePageId'] = active
+            _mirror_active_page(note)
+        else:
+            note.update(_page_content(raw, budget))
         for key in _TIMESTAMPS:
             if key in raw:
                 note[key] = _timestamp(raw[key])
@@ -152,7 +184,8 @@ def create_notebook_backup(notes, *, active_id=None, note_id=None):
     """Return a secret-free ``.spennotes`` version-1 backup as UTF-8 bytes.
 
     ``note_id`` exports only that note; omitting it exports the collection.
-    Notes, strokes and text annotations are copied without changing the source.
+    All pages, strokes and text annotations are copied without changing the
+    source. Legacy flat-only notes retain their original single-page shape.
     """
     if not isinstance(notes, (list, tuple)):
         raise ValueError('保存するノートの一覧が正しくありません。')
@@ -204,7 +237,7 @@ def parse_notebook_backup(data, *, existing_notes=()):
 
     Returns ``{'notes': [...], 'activeId': '...'}``. Append these notes only
     after this function succeeds. Existing notes and all source IDs are kept
-    untouched; every imported note and text receives a new unique identifier.
+    untouched; every imported note, page and text gets a fresh identifier.
     """
     try:
         if isinstance(data, str):
@@ -228,17 +261,33 @@ def parse_notebook_backup(data, *, existing_notes=()):
             continue
         if isinstance(note.get('id'), str):
             used.add(note['id'])
-        for item in note.get('texts', []):
-            if isinstance(item, dict) and isinstance(item.get('id'), str):
-                used.add(item['id'])
+        for content in [note, *note.get('pages', [])]:
+            if not isinstance(content, dict):
+                continue
+            if isinstance(content.get('id'), str):
+                used.add(content['id'])
+            for item in content.get('texts', []):
+                if isinstance(item, dict) and isinstance(item.get('id'), str):
+                    used.add(item['id'])
     active_id, source_active = None, payload.get('activeId')
     for note in sanitized:
         original_id = note['id']
         note['id'] = _fresh_id(used)
         if active_id is None and original_id == source_active:
             active_id = note['id']
-        for item in note['texts']:
-            item['id'] = _fresh_id(used)
+        if 'pages' in note:
+            page_ids = {}
+            for page in note['pages']:
+                previous_id = page['id']
+                page['id'] = _fresh_id(used)
+                page_ids.setdefault(previous_id, page['id'])
+                for item in page['texts']:
+                    item['id'] = _fresh_id(used)
+            note['activePageId'] = page_ids[note['activePageId']]
+            _mirror_active_page(note)
+        else:
+            for item in note['texts']:
+                item['id'] = _fresh_id(used)
     return {'notes': sanitized, 'activeId': active_id or sanitized[0]['id']}
 
 
@@ -270,13 +319,25 @@ def image_to_png_bytes(image):
         buffer.close()
 
 
-def image_to_pdf_bytes(image, *, title=''):
-    """Encode one rendered page with exact source aspect and a white background.
+def _pdf_page_size(writer, image):
+    longest = max(image.width(), image.height())
+    size = QSizeF(297 * image.width() / longest, 297 * image.height() / longest)
+    writer.setPageSize(QPageSize(size, QPageSize.Unit.Millimeter, 'SpenNotes', QPageSize.SizeMatchPolicy.ExactMatch))
+    writer.setPageMargins(QMarginsF(0, 0, 0, 0))
 
-    The longer paper edge is 297 mm. The supplied image already contains the
-    note's paper, ink and text, so this helper does not inspect application data.
+
+def images_to_pdf_bytes(images, *, title=''):
+    """Stream rendered pages into one PDF, retaining each page's own aspect.
+
+    ``images`` may be a generator: only the current page is held by this helper.
+    Each supplied image already contains its paper, ink and text. No incomplete
+    PDF is returned when a later page is invalid or the page limit is exceeded.
     """
-    image = _image(image)
+    try:
+        iterator = iter(images)
+        first = _image(next(iterator))
+    except (TypeError, StopIteration) as exc:
+        raise ValueError('PDFに保存するページを1枚以上指定してください。') from exc
     if title:
         title = _title(title)
     data = QByteArray()
@@ -287,23 +348,37 @@ def image_to_pdf_bytes(image, *, title=''):
     if title:
         writer.setTitle(title)
     writer.setResolution(144)
-    longest = max(image.width(), image.height())
-    size = QSizeF(297 * image.width() / longest, 297 * image.height() / longest)
-    writer.setPageSize(QPageSize(size, QPageSize.Unit.Millimeter, 'SpenNotes', QPageSize.SizeMatchPolicy.ExactMatch))
-    writer.setPageMargins(QMarginsF(0, 0, 0, 0))
+    _pdf_page_size(writer, first)
     painter = QPainter(writer)
     if not painter.isActive():
         buffer.close()
         raise ValueError('ノートのPDFを作成できませんでした。')
+    pages = chain((first,), iterator)
+    del first
     try:
-        target = QRectF(0, 0, writer.width(), writer.height())
-        painter.fillRect(target, Qt.GlobalColor.white)
-        painter.drawImage(target, image)
+        for index, raw_image in enumerate(pages):
+            if index >= MAX_PAGES:
+                raise ValueError('PDFは1000ページまでです。ノートを分けて書き出してください。')
+            image = _image(raw_image)
+            if index:
+                _pdf_page_size(writer, image)
+                if not writer.newPage():
+                    raise ValueError('ノートのPDFにページを追加できませんでした。')
+            painter.setViewport(0, 0, writer.width(), writer.height())
+            painter.setWindow(0, 0, writer.width(), writer.height())
+            target = QRectF(0, 0, writer.width(), writer.height())
+            painter.fillRect(target, Qt.GlobalColor.white)
+            painter.drawImage(target, image)
     finally:
         painter.end()
-    del writer
-    buffer.close()
+        del writer
+        buffer.close()
     output = bytes(data)
     if not output.startswith(b'%PDF-'):
         raise ValueError('ノートのPDFを作成できませんでした。')
     return output
+
+
+def image_to_pdf_bytes(image, *, title=''):
+    """Encode one white-paper page; compatible with the original helper API."""
+    return images_to_pdf_bytes((image,), title=title)

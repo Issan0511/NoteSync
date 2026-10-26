@@ -195,6 +195,7 @@ class WebBridge(QObject):
     toggle_sketch_visibility_command = Signal()
     save_sketch_requested = Signal()
     notebook_command = Signal(dict)
+    page_ink_command = Signal(dict)
     erase_started = Signal()
     erase_ended = Signal()
     redo_requested = Signal()
@@ -506,11 +507,15 @@ class WebServer:
 
     def _handle_client_message(self, data: dict, reply_client=None):
         msg_type = data.get("type")
+        if ('documentId' in data and msg_type in ('stroke_start', 'stroke_move', 'stroke_end',
+                'erase_start', 'erase', 'erase_end', 'line_update', 'undo', 'redo', 'clear')):
+            self.bridge.page_ink_command.emit(data)
+            return
         if msg_type == 'note_file':
             payload = dict(data)
             payload['_reply_client'] = reply_client
             self.bridge.notebook_command.emit(payload)
-        elif msg_type in ('note_new', 'note_select', 'note_title', 'note_paper', 'note_save', 'note_ink_edit', 'note_library', 'note_save_checkpoint'):
+        elif msg_type in ('note_new', 'note_select', 'note_title', 'note_paper', 'note_save', 'note_ink_edit', 'note_library', 'note_save_checkpoint', 'note_page'):
             self.bridge.notebook_command.emit(data)
         elif msg_type == 'erase_start':
             self.bridge.erase_started.emit()

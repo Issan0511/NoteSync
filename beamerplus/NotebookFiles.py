@@ -6,7 +6,7 @@ import re
 
 from beamerplus.NotebookExports import (
     create_notebook_backup, parse_notebook_backup,
-    image_to_png_bytes, image_to_pdf_bytes,
+    image_to_png_bytes, images_to_pdf_bytes,
 )
 
 
@@ -42,7 +42,7 @@ class NotebookFilesMixin:
                 reply.update(ok=True, importedCount=len(imported['notes']))
                 self.web_server.broadcast(dict(self._get_web_status(), type='state_sync'))
             elif action in ('png', 'pdf', 'backup', 'backup_all'):
-                if data.get('documentId') != self.store.active_id:
+                if data.get('documentId') != getattr(self, '_document_id', self.store.active_id):
                     raise ValueError('ノートが切り替わりました。もう一度書き出してください。')
                 saved = self.save_notebook()
                 title = self.store.active['title']
@@ -53,12 +53,16 @@ class NotebookFilesMixin:
                     mime = 'application/json'
                     filename = (filename if action == 'backup' else 'SpenNotes-全ノート') + '.spennotes'
                 else:
-                    image = self.render_current_page_image_with_sketch()
                     if action == 'png':
+                        image = self.render_current_page_image_with_sketch()
                         blob = image_to_png_bytes(image)
                         mime = 'image/png'
+                        pages = self.store.ensure_pages(self.store.active)
+                        index = next(i for i, page in enumerate(pages) if page['id'] == self.store.active_page['id'])
+                        filename += f'-ページ{index + 1}'
                     else:
-                        blob = image_to_pdf_bytes(image, title=title)
+                        pages = self.store.ensure_pages(self.store.active)
+                        blob = images_to_pdf_bytes((self.render_notebook_page_image(page) for page in pages), title=title)
                         mime = 'application/pdf'
                     filename += '.' + action
                 reply.update(ok=True, saved=saved, filename=filename, mime=mime,

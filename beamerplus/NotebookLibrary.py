@@ -18,7 +18,10 @@ def _now():
 
 
 def _signature(note):
-    content = {key: value for key, value in note.items() if key not in ('createdAt', 'updatedAt')}
+    excluded = {'createdAt', 'updatedAt', 'activePageId'}
+    if note.get('pages'):
+        excluded.update(('strokes', 'texts', 'paper', 'aspect'))
+    content = {key: value for key, value in note.items() if key not in excluded}
     return hashlib.sha256(json.dumps(content, ensure_ascii=False, sort_keys=True,
                                      separators=(',', ':')).encode()).hexdigest()
 
@@ -73,6 +76,9 @@ class NotebookLibraryMixin:
         if server is not None:
             server.broadcast(message)
 
+    def _library_document_id(self):
+        return getattr(self, '_document_id', self.store.active_id)
+
     def _library_set_save_state(self, state, message=None, *, save_checkpoints=None):
         self._notebook_save_state = state
         self._notebook_save_error = message if state == 'error' else None
@@ -81,7 +87,8 @@ class NotebookLibraryMixin:
         label = getattr(self, 'save_label', None)
         if label is not None:
             label.setText(labels[state])
-        payload = {'type': 'note_save_state', 'state': state, 'noteId': self.store.active_id,
+        payload = {'type': 'note_save_state', 'state': state, 'noteId': self._library_document_id(),
+                   'notebookId': self.store.active_id,
                    'inkRevision': getattr(self.controller, 'ink_revision', 0),
                    'savedAt': self._notebook_saved_at,
                    'saveCheckpoints': list(save_checkpoints or [])}
@@ -94,11 +101,15 @@ class NotebookLibraryMixin:
         note['strokes'] = self.controller.serialized_ink()
         if hasattr(self.controller, 'serialized_texts'):
             note['texts'] = self.controller.serialized_texts()
+        if hasattr(self.store, 'sync_active_page'):
+            self.store.sync_active_page()
 
     def _library_observe_changes(self):
         changed = False
         self._init_notebook_library()
         for note in self.store.notes:
+            if hasattr(self.store, 'sync_active_page'):
+                self.store.sync_active_page(note)
             signature = _signature(note)
             if self._library_observed_signatures.get(note['id']) != signature:
                 note['updatedAt'] = _now()
@@ -120,11 +131,12 @@ class NotebookLibraryMixin:
         self._notebook_saved_at = _now()
         self._library_saved_signatures = {note['id']: _signature(note) for note in self.store.notes}
         self._library_observed_signatures = dict(self._library_saved_signatures)
-        document_id = self.store.active_id
+        document_id = self._library_document_id()
         checkpoints = [request_id for note_id, request_id in self._library_save_checkpoints
                        if note_id == document_id]
         self._library_set_save_state('saved', save_checkpoints=checkpoints)
-        self._library_broadcast({'type': 'note_saved', 'state': 'saved', 'noteId': self.store.active_id,
+        self._library_broadcast({'type': 'note_saved', 'state': 'saved', 'noteId': document_id,
+                                 'notebookId': self.store.active_id,
                                  'inkRevision': getattr(self.controller, 'ink_revision', 0),
                                  'savedAt': self._notebook_saved_at, 'saveCheckpoints': checkpoints})
         self._library_save_checkpoints = [(note_id, request_id)
@@ -135,7 +147,7 @@ class NotebookLibraryMixin:
         message = 'PCへの保存に失敗しました。変更を保持しているので、保存先を確認して再試行してください。'
         self._library_set_save_state('error', message)
         self._library_broadcast({'type': 'note_error', 'message': message,
-                                 'noteId': self.store.active_id})
+                                 'noteId': self._library_document_id()})
 
     def save_notebook(self, *args):
         """Save a snapshot; explicit library actions finish pen gestures first.
@@ -168,11 +180,15 @@ class NotebookLibraryMixin:
         metadata = []
         for note in self.store.notes:
             active = note['id'] == self.store.active_id
-            strokes = self.controller.sketchbook_strokes if active else note.get('strokes', [])
-            texts = getattr(self.controller, 'sketchbook_texts', []) if active else note.get('texts', [])
+            pages = self.store.ensure_pages(note) if hasattr(self.store, 'ensure_pages') else [note]
+            selected = note.get('activePageId', note['id'])
+            stroke_count = sum(len(self.controller.sketchbook_strokes) if active and page.get('id') == selected
+                               else len(page.get('strokes', [])) for page in pages)
+            text_count = sum(len(getattr(self.controller, 'sketchbook_texts', [])) if active and page.get('id') == selected
+                             else len(page.get('texts', [])) for page in pages)
             metadata.append({'id': note['id'], 'title': note['title'], 'paper': note.get('paper', 'plain'),
-                             'aspect': note.get('aspect', 4 / 3), 'strokeCount': len(strokes),
-                             'textCount': len(texts), 'createdAt': note['createdAt'],
+                             'aspect': note.get('aspect', 4 / 3), 'strokeCount': stroke_count,
+                             'textCount': text_count, 'pageCount': len(pages), 'createdAt': note['createdAt'],
                              'updatedAt': note['updatedAt'], 'deletedAt': note.get('deletedAt')})
         return metadata
 
@@ -193,7 +209,7 @@ class NotebookLibraryMixin:
 
     def _library_load_active(self, previous_id):
         note = self.store.active
-        self._document_id = note['id']
+        self._document_id = self.store.active_page['id'] if hasattr(self.store, 'active_page') else note['id']
         self.canvas.aspect = note.get('aspect', 4 / 3)
         self.canvas.paper = note.get('paper', 'plain')
         if previous_id != note['id']:
@@ -203,6 +219,8 @@ class NotebookLibraryMixin:
                 self.controller.load_ink(note['strokes'])
         self.title_label.setText(note['title'])
         self.canvas.update()
+        if hasattr(self, '_update_page_label'):
+            self._update_page_label()
 
     def _library_find(self, identifier, *, allow_deleted=False):
         note = next((note for note in self.store.notes if note['id'] == identifier), None)
@@ -223,8 +241,21 @@ class NotebookLibraryMixin:
             note.update(id=uuid.uuid4().hex, title=_title(data.get('title', source['title'] + ' のコピー')),
                         createdAt=stamp, updatedAt=stamp, deletedAt=None)
             note.pop('importTag', None)
-            for item in note.get('texts', []):
-                item['id'] = uuid.uuid4().hex
+            if hasattr(self.store, 'ensure_pages'):
+                pages = self.store.ensure_pages(note)
+                selected = note['activePageId']
+                for index, page in enumerate(pages):
+                    old_id = page['id']
+                    page['id'] = note['id'] if index == 0 else uuid.uuid4().hex
+                    if old_id == selected:
+                        note['activePageId'] = page['id']
+                    for item in page.get('texts', []):
+                        item['id'] = uuid.uuid4().hex
+                selected_page = next(page for page in pages if page['id'] == note['activePageId'])
+                note.update({key: selected_page[key] for key in ('strokes', 'texts', 'paper', 'aspect')})
+            else:
+                for item in note.get('texts', []):
+                    item['id'] = uuid.uuid4().hex
             self.store.notes.insert(0, note)
             self.store.active_id = note['id']
         elif action == 'trash':
@@ -258,13 +289,16 @@ class NotebookLibraryMixin:
         return ok
 
     def _on_notebook_command(self, data):
+        if (data.get('type') == 'note_paper' and 'documentId' in data
+                and data['documentId'] != self._library_document_id()):
+            return self._library_result('paper', data, False, 'ページが切り替わりました。もう一度用紙を選んでください。')
         if data.get('type') == 'note_save_checkpoint':
             self._init_notebook_library()
             request_id = data.get('requestId')
             if (not isinstance(request_id, str) or re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', request_id) is None
-                    or data.get('documentId') != self.store.active_id):
+                    or data.get('documentId') != self._library_document_id()):
                 return False
-            checkpoint = (self.store.active_id, request_id)
+            checkpoint = (self._library_document_id(), request_id)
             if checkpoint not in self._library_save_checkpoints:
                 self._library_save_checkpoints.append(checkpoint)
                 self._library_save_checkpoints = self._library_save_checkpoints[-64:]

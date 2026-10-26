@@ -42,6 +42,7 @@ const notebookLibraryIcon=(name)=>'<svg viewBox="0 0 24 24" fill="none" stroke="
   book:'<path d="M5 3h12a2 2 0 0 1 2 2v16H7a3 3 0 0 1-3-3V5a2 2 0 0 1 1-2zM4 17h15M8 6h7"/>',trash:'<path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/>'
 }[name]||'')+'</svg>';
 let notebookLibraryTab='notes',notebookLibraryView='grid',notebookLibrarySort='updated',notebookLibraryPending=null,notebookLibraryRenameId=null,notebookLibrarySequence=0;
+function notebookLibraryCurrentId(){return typeof currentNotebookId!=='undefined'&&currentNotebookId?currentNotebookId:currentDocumentId;}
 try{const view=localStorage.getItem('beamerplus_library_view'),sort=localStorage.getItem('beamerplus_library_sort');if(['grid','list'].includes(view))notebookLibraryView=view;if(['updated','title'].includes(sort))notebookLibrarySort=sort;}catch(_){}
 $('note-library').innerHTML=`
   <header class="library-header"><button type="button" class="icon-button" id="close-library" aria-label="ノートへ戻る">${notebookLibraryIcon('back')}</button><h2>ノート</h2><div id="library-file-actions"></div><button type="button" id="new-note" class="library-create">${notebookLibraryIcon('plus')}新しいノート</button></header>
@@ -87,13 +88,13 @@ function openNotebookLibraryMenu(note,anchor){
   const r=anchor.getBoundingClientRect();notebookLibraryMenu.style.left=`${Math.max(12,Math.min(window.innerWidth-217,r.right-205))}px`;notebookLibraryMenu.style.top=`${Math.max(12,Math.min(window.innerHeight-172,r.bottom+5))}px`;notebookLibraryMenu.hidden=false;
 }
 function notebookLibraryCard(note){
-  const trashed=!!note.deletedAt,card=document.createElement('article');card.className='library-card';card.classList.toggle('current',!trashed&&note.id===currentDocumentId);card.classList.toggle('trashed',trashed);card.setAttribute('role','listitem');card.dataset.noteId=note.id;
+  const trashed=!!note.deletedAt,card=document.createElement('article');card.className='library-card';card.classList.toggle('current',!trashed&&note.id===notebookLibraryCurrentId());card.classList.toggle('trashed',trashed);card.setAttribute('role','listitem');card.dataset.noteId=note.id;
   const open=document.createElement('button');open.type='button';open.className='library-card-main';open.disabled=!!notebookLibraryPending||trashed;open.setAttribute('aria-label',`${note.title||'新しいノート'}${trashed?'、ゴミ箱':' を開く'}`);
   const preview=document.createElement('div');preview.className='library-preview';preview.setAttribute('aria-hidden','true');const page=document.createElement('div');page.className='library-paper';if(['ruled','grid'].includes(note.paper))page.classList.add(note.paper);page.innerHTML=notebookLibraryIcon('book');preview.appendChild(page);open.appendChild(preview);
-  if(note.id===currentDocumentId&&!trashed){const current=document.createElement('span');current.className='library-current-badge';current.textContent='開いているノート';open.appendChild(current);}
+  if(note.id===notebookLibraryCurrentId()&&!trashed){const current=document.createElement('span');current.className='library-current-badge';current.textContent='開いているノート';open.appendChild(current);}
   const copy=document.createElement('div');copy.className='library-card-copy';const title=document.createElement('strong');title.className='library-card-title';title.textContent=note.title||'新しいノート';copy.appendChild(title);
   const date=document.createElement('span');date.className='library-card-date';const stamp=notebookLibraryDate(trashed?note.deletedAt:note.updatedAt||note.createdAt);date.textContent=stamp?(trashed?'移動 ':'更新 ')+stamp:'保存したノート';copy.appendChild(date);
-  const detail=document.createElement('span');detail.className='library-card-detail';const counts=[],ink=notebookLibraryCount(note.strokeCount),text=notebookLibraryCount(note.textCount);if(ink!==null)counts.push(`筆跡 ${ink}`);if(text!==null)counts.push(`テキスト ${text}`);const paperLabel={plain:'白紙',ruled:'横罫線',grid:'方眼'}[note.paper]||'白紙';detail.textContent=[paperLabel,...counts].join(' · ');copy.appendChild(detail);open.appendChild(copy);open.addEventListener('click',()=>beginNotebookLibraryNavigation('select',note.id));card.appendChild(open);
+  const detail=document.createElement('span');detail.className='library-card-detail';const counts=[];if(Number.isInteger(note.pageCount))counts.push(`${note.pageCount}ページ`);const ink=notebookLibraryCount(note.strokeCount),text=notebookLibraryCount(note.textCount);if(ink!==null)counts.push(`筆跡 ${ink}`);if(text!==null)counts.push(`テキスト ${text}`);const paperLabel={plain:'白紙',ruled:'横罫線',grid:'方眼'}[note.paper]||'白紙';detail.textContent=[paperLabel,...counts].join(' · ');copy.appendChild(detail);open.appendChild(copy);open.addEventListener('click',()=>beginNotebookLibraryNavigation('select',note.id));card.appendChild(open);
   const more=document.createElement('button');more.type='button';more.disabled=!!notebookLibraryPending;
   if(trashed){more.className='library-restore';more.textContent='復元';more.setAttribute('aria-label',`${note.title||'新しいノート'} を復元`);more.addEventListener('click',()=>requestNotebookLibraryAction('restore',note.id));}
   else{more.className='icon-button library-card-more';more.innerHTML=notebookLibraryIcon('more');more.setAttribute('aria-label',`${note.title||'新しいノート'} の操作`);more.addEventListener('click',e=>{e.stopPropagation();openNotebookLibraryMenu(note,more);});}
@@ -127,7 +128,7 @@ const handleMessageBeforeLibrary=handleServerMessage;handleServerMessage=functio
   const result=handleMessageBeforeLibrary(msg);
   if(msg.type==='state_sync'){
     renderNotebookLibrary();const pending=notebookLibraryPending;
-    if(pending&&(pending.action==='select'&&msg.documentId===pending.id||pending.action==='new'&&msg.documentId&&!pending.beforeIds.includes(msg.documentId))){notebookLibraryPending=null;notebookLibraryMessage('');closeNotebookLibrary();renderNotebookLibrary();}
+    if(pending&&(pending.action==='select'&&(msg.notebookId||msg.documentId)===pending.id||pending.action==='new'&&(msg.notebookId||msg.documentId)&&!pending.beforeIds.includes(msg.notebookId||msg.documentId))){notebookLibraryPending=null;notebookLibraryMessage('');closeNotebookLibrary();renderNotebookLibrary();}
   }else if(msg.type==='note_library_result'&&notebookLibraryPending?.requestId===msg.requestId){
     const pending=notebookLibraryPending;notebookLibraryPending=null;$('library-rename-save').disabled=false;
     if(msg.ok){notebookLibraryRename.hidden=true;const message={rename:'名前を変更しました',duplicate:'ノートを複製しました',trash:'ゴミ箱へ移動しました',restore:'ノートを復元しました'}[pending.action];notebookLibraryMessage(message||'保存しました');if($('library-overlay').hidden)showToast(message||'保存しました');}

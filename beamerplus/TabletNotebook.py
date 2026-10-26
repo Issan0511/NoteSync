@@ -11,6 +11,7 @@ from beamerplus.TabletMenus import MENUS_SCRIPT, MENUS_STYLE
 from beamerplus.NotebookText import NOTE_TEXT_SCRIPT
 from beamerplus.TabletText import INSTALL_TEXT_SCRIPT
 from beamerplus.TabletVersion import VERSION_SCRIPT
+from beamerplus.TabletPages import PAGES_SCRIPT, PAGES_STYLE
 
 
 ICONS = {
@@ -107,7 +108,7 @@ SCRIPT = r"""
     const activeCtx=activeCanvas.getContext('2d'),committedCtx=committedCanvas.getContext('2d');
     const btnPen=$('btn-pen'),btnHighlighter=$('btn-highlighter'),btnEraser=$('btn-eraser'),penOnlyToggle=$('penOnlyToggle'),penButtonModeSelect=$('pen-button-mode');
     let currentTool='pen',currentColor='#202124',selectedBrush='pen',isLineMode=false,isDrawing=false,isSketchbook=true,isSketchVisible=true;
-    let currentStrokePoints=[],sketchbookStrokes=[],noteTexts=[],slideStrokes=[],currentDocumentId='',currentPage=0,slideImageReady=true,isTrackingSwipe=false;
+    let currentStrokePoints=[],sketchbookStrokes=[],noteTexts=[],slideStrokes=[],currentDocumentId='',currentNotebookId='',currentPage=0,slideImageReady=true,isTrackingSwipe=false;
     let eraserMode='stroke',toolSizes={pen:4,highlighter:22,eraser:18},toolOpacities={pen:1,highlighter:.3};
     let notebookReady=false,notes=[],paper='plain',paperAspect=4/3,selectedFavorite=-1,remoteStroke=null;
     const brushNames={pen:'ボールペン',fountain:'万年筆',pencil:'鉛筆',highlighter:'蛍光ペン'};
@@ -202,7 +203,7 @@ SCRIPT = r"""
     function renderNotes(){const list=$('notebook-list');list.replaceChildren();for(const note of notes){const b=document.createElement('button');b.className='note-row';b.classList.toggle('active',note.id===currentDocumentId);b.textContent=note.title;const small=document.createElement('small');small.textContent=note.id===currentDocumentId?'いま開いているノート':'ノートを開く';b.appendChild(small);b.addEventListener('click',()=>{finishActiveInput();sendWS({type:'note_select',id:note.id});closeOverlays();});list.appendChild(b);}}
     $('open-library').addEventListener('click',()=>{renderNotes();openOverlay('library-overlay');});$('new-note').addEventListener('click',()=>{finishActiveInput();sendWS({type:'note_new'});closeOverlays();});
     $('open-options').addEventListener('click',()=>openOverlay('options-overlay'));
-    let titleTimer;$('note-title').addEventListener('input',()=>{clearTimeout(titleTimer);const id=currentDocumentId,title=$('note-title').value;titleTimer=setTimeout(()=>sendWS({type:'note_title',id,title}),450);});
+    let titleTimer;$('note-title').addEventListener('input',()=>{clearTimeout(titleTimer);const id=currentNotebookId||currentDocumentId,title=$('note-title').value;titleTimer=setTimeout(()=>sendWS({type:'note_title',id,title}),450);});
     $('paper-style').addEventListener('change',()=>sendWS({type:'note_paper',paper:$('paper-style').value}));
     $('clear-note').addEventListener('click',()=>{finishActiveInput();const sent=sendWS({type:'clear'});closeOverlays();if(sent)showToast('筆跡を消しました。「元に戻す」で復元できます');});
     function paintNotebookPaper(ctx,w,h){ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);if(paper==='plain')return;ctx.strokeStyle='#e5e9f0';ctx.lineWidth=1;const gap=h/24;ctx.beginPath();for(let y=gap;y<h;y+=gap){ctx.moveTo(0,y);ctx.lineTo(w,y);}if(paper==='grid')for(let x=gap;x<w;x+=gap){ctx.moveTo(x,0);ctx.lineTo(x,h);}ctx.stroke();}
@@ -216,7 +217,7 @@ SCRIPT = r"""
     function handleServerMessage(msg){
       if(msg.type.startsWith('ai_')){handleAssistantMessage(msg);return;}
       if(msg.type==='state_sync'){
-        finishActiveInput();const oldAspect=paperAspect;paperAspect=Number.isFinite(msg.paperAspect)&&msg.paperAspect>=.4&&msg.paperAspect<=2.5?msg.paperAspect:4/3;currentDocumentId=msg.documentId||'';sketchbookStrokes=msg.sketchbookStrokes||msg.strokes||[];noteTexts=msg.noteTexts||[];notes=msg.notes||[];
+        finishActiveInput();const oldAspect=paperAspect;paperAspect=Number.isFinite(msg.paperAspect)&&msg.paperAspect>=.4&&msg.paperAspect<=2.5?msg.paperAspect:4/3;currentDocumentId=msg.documentId||'';currentNotebookId=msg.notebookId||msg.documentId||'';currentPage=Number.isInteger(msg.currentPage)?msg.currentPage:0;sketchbookStrokes=msg.sketchbookStrokes||msg.strokes||[];noteTexts=msg.noteTexts||[];notes=msg.notes||[];
         if(document.activeElement!==$('note-title'))$('note-title').value=msg.title||'新しいノート';paper=msg.paper||'plain';slideWrapper.classList.toggle('ruled',paper==='ruled');slideWrapper.classList.toggle('grid',paper==='grid');$('paper-style').value=paper;$('note-footer').textContent={plain:'白紙のノート',ruled:'横罫線のノート',grid:'方眼のノート'}[paper];if(oldAspect!==paperAspect)adjustLayout();else renderAllStrokes(sketchbookStrokes);renderNotes();setHistory(msg);
       }else if(msg.type==='note_texts_updated'){if(msg.documentId===currentDocumentId){noteTexts=msg.texts||[];renderAllStrokes(sketchbookStrokes);}}
       else if(['strokes_updated','stroke_undone'].includes(msg.type)){sketchbookStrokes=msg.strokes||[];renderAllStrokes(sketchbookStrokes);}
@@ -237,15 +238,17 @@ SCRIPT = r"""
     __ERASER_CURSOR_SCRIPT__
     __LIBRARY_SCRIPT__
     __MENUS_SCRIPT__
+    __PAGES_SCRIPT__
     __VERSION_SCRIPT__
     updatePenUI();setHistory({canUndo:false,canRedo:false});adjustLayout();connectWS();
     window.addEventListener('resize',adjustLayout);window.visualViewport?.addEventListener('resize',adjustLayout);
 """
 
-NOTEBOOK_HTML = (f'<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>BeamerPlus Notes</title><style>{ASSISTANT_STYLE}{STYLE}{NAVIGATION_STYLE}{SELECTION_STYLE}{FAVORITES_STYLE}{LIBRARY_STYLE}{MENUS_STYLE}</style></head><body>{MARKUP}{ASSISTANT_MARKUP}<script>'
+NOTEBOOK_HTML = (f'<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><title>BeamerPlus Notes</title><style>{ASSISTANT_STYLE}{STYLE}{NAVIGATION_STYLE}{SELECTION_STYLE}{FAVORITES_STYLE}{LIBRARY_STYLE}{MENUS_STYLE}{PAGES_STYLE}</style></head><body>{MARKUP}{ASSISTANT_MARKUP}<script>'
                  + SCRIPT.replace('__INPUT_SCRIPT__', INPUT_SCRIPT).replace('__ASSISTANT_SCRIPT__', ASSISTANT_SCRIPT).replace('__NOTE_TEXT_SCRIPT__', NOTE_TEXT_SCRIPT)
                  .replace('__NAVIGATION_SCRIPT__', NAVIGATION_SCRIPT).replace('__SELECTION_SCRIPT__', SELECTION_SCRIPT)
                  .replace('__INSTALL_TEXT_SCRIPT__', INSTALL_TEXT_SCRIPT)
                  .replace('__FAVORITES_SCRIPT__', FAVORITES_SCRIPT).replace('__ERASER_CURSOR_SCRIPT__', ERASER_CURSOR_SCRIPT)
                  .replace('__LIBRARY_SCRIPT__', LIBRARY_SCRIPT).replace('__MENUS_SCRIPT__', MENUS_SCRIPT)
+                 .replace('__PAGES_SCRIPT__', PAGES_SCRIPT)
                  .replace('__VERSION_SCRIPT__', VERSION_SCRIPT) + '</script></body></html>')

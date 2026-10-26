@@ -17,10 +17,11 @@ from beamerplus.MainWindow import MainWindow
 from beamerplus.NotebookModel import NotebookController, NotebookStore
 from beamerplus.NotebookLibrary import NotebookLibraryMixin
 from beamerplus.NotebookFiles import NotebookFilesMixin
-from beamerplus.NotebookText import annotation_payload, paint_note_texts, text_bounds
+from beamerplus.NotebookPages import NotebookPagesMixin
+from beamerplus.NotebookText import annotation_payload, paint_note_texts, prepare_text, text_bounds
 from beamerplus.NotebookBridge import NotebookBridge
 from beamerplus.SlideCanvas import SlideCanvas
-from beamerplus.DrawingModel import paint_ink
+from beamerplus.DrawingModel import Stroke, paint_ink
 from beamerplus.WebServer import WebBridge, WebServer
 
 
@@ -43,7 +44,7 @@ class NotebookCanvas(SlideCanvas):
         painter.end()
 
 
-class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
+class NotebookWindow(NotebookFilesMixin, NotebookPagesMixin, NotebookLibraryMixin, MainWindow):
     def __init__(self, store_path=None, import_state=None, http_port=8080, ws_port=8765, mcp_connection_file=None):
         QMainWindow.__init__(self)
         self.setWindowTitle('BeamerPlus Notes')
@@ -61,7 +62,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
         if import_state:
             self.store.import_ink(import_state.get('sketchbookStrokes', []) or import_state.get('strokes', []))
         self._init_notebook_library()
-        self._document_id = self.store.active_id
+        self._document_id = self.store.active_page['id']
         self.canvas = NotebookCanvas(self.controller)
         self.canvas.aspect = self.store.active.get('aspect', 4 / 3)
         self.canvas.paper = self.store.active.get('paper', 'plain')
@@ -81,6 +82,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
                                     http_port=http_port, ws_port=ws_port)
         self._connect_web_signals()
         self.web_bridge.notebook_command.connect(self._on_notebook_command)
+        self.web_bridge.page_ink_command.connect(self._on_page_ink_command)
         self.web_bridge.erase_started.connect(self._begin_web_erase)
         self.web_bridge.erase_ended.connect(self._finish_erase)
         self.web_bridge.redo_requested.connect(self.controller.redo)
@@ -89,6 +91,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
         for signal in (self.controller.stroke_finished, self.controller.strokes_updated, self.controller.strokes_cleared, self.controller.texts_updated):
             signal.connect(self._ink_changed)
         self._create_menus_and_toolbars()
+        self._update_page_label()
         self.setStyleSheet('QMainWindow { background:#e9e9ed; } QToolBar {background:#fff; spacing:12px; padding:12px; border:0;} QPushButton {padding:8px 12px; border:1px solid #ddd; border-radius:8px; background:white; color:#24262b;} QLabel {color:#35373d;}')
         self.save_notebook()
         self.web_server.start()
@@ -105,6 +108,12 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
         self.title_label = QLabel(self.store.active['title'])
         self.title_label.setStyleSheet('font-size:18px;font-weight:600;')
         self.main_toolbar.addWidget(self.title_label)
+        self.page_label = QLabel('1 / 1 ページ')
+        self.main_toolbar.addWidget(self.page_label)
+        for text, action in [('‹', 'previous'), ('›', 'next'), ('＋ ページ', 'add')]:
+            button = QPushButton(text)
+            button.clicked.connect(lambda checked=False, action=action: self._desktop_page_action(action))
+            self.main_toolbar.addWidget(button)
         for text, callback in [('＋ 新しいノート', lambda: self._on_notebook_command({'type': 'note_new'})),
                                ('↶ 戻す', self.controller.undo), ('↷ やり直す', self.controller.redo),
                                ('画像で保存', self.export_notebook)]:
@@ -132,6 +141,23 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
 
     def _tb_btn_style(self):
         return 'QPushButton {padding:8px 12px;border:1px solid #ddd;border-radius:8px;background:white;color:#24262b;}'
+
+    def _desktop_page_action(self, action):
+        pages = self.store.ensure_pages(self.store.active)
+        index = next(index for index, page in enumerate(pages) if page['id'] == self.store.active_page['id'])
+        if action == 'add':
+            payload = {'action': 'add'}
+        else:
+            target = index + (1 if action == 'next' else -1)
+            if not 0 <= target < len(pages):
+                return
+            payload = {'action': 'select', 'pageId': pages[target]['id']}
+        self._on_notebook_command(dict(payload, type='note_page', documentId=self._document_id))
+
+    def _update_page_label(self):
+        pages = self.store.ensure_pages(self.store.active)
+        index = next(index for index, page in enumerate(pages) if page['id'] == self.store.active_page['id'])
+        self.page_label.setText(f'{index + 1} / {len(pages)} ページ')
 
     def _ink_changed_legacy(self, *args):
         self.save_label.setText('保存中…')
@@ -163,9 +189,13 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
 
     def _mcp_metadata(self):
         note = self.store.active
-        version = [self._mcp_instance, note['id'], self.controller.ink_revision,
+        pages = self.store.ensure_pages(note)
+        page_id = self.store.active_page['id']
+        page_index = next(index for index, page in enumerate(pages) if page['id'] == page_id)
+        version = [self._mcp_instance, note['id'], page_id, self.controller.ink_revision,
                    note['title'], note.get('paper', 'plain'), note.get('aspect', 4 / 3)]
-        return {'note_id': note['id'], 'title': note['title'],
+        return {'note_id': note['id'], 'title': note['title'], 'page_id': page_id,
+                'page_index': page_index, 'page_count': len(pages),
                 'revision': hashlib.sha256(json.dumps(version).encode()).hexdigest(),
                 'aspect': note.get('aspect', 4 / 3), 'paper': note.get('paper', 'plain'),
                 'stroke_count': len(self.controller.sketchbook_strokes),
@@ -218,7 +248,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
                 self.store.new_note()
             else:
                 self.store.active_id = target
-            self._document_id = self.store.active_id
+            self._document_id = self.store.active_page['id']
             self.canvas.aspect = self.store.active.get('aspect', 4 / 3)
             self.canvas.paper = self.store.active.get('paper', 'plain')
             self.controller.load_ink(self.store.active['strokes'], self.store.active.get('texts'))
@@ -242,7 +272,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
 
     def _on_ink_edit(self, data):
         try:
-            if data.get('documentId') != self.store.active_id:
+            if data.get('documentId') != getattr(self, '_document_id', self.store.active_id):
                 raise ValueError('別のノートが開かれています。もう一度囲んで選択してください。')
             indices = self.controller.apply_ink_edit(data)
             self._finish_erase()
@@ -250,14 +280,14 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
             self.web_server.broadcast({'type': 'note_error', 'message': str(exc)})
             self.web_server.broadcast(dict(self._get_web_status(), type='state_sync'))
             self.web_server.broadcast({'type': 'note_ink_edit_result', 'ok': False,
-                                       'documentId': self.store.active_id, 'inkRevision': self.controller.ink_revision,
+                                       'documentId': getattr(self, '_document_id', self.store.active_id), 'inkRevision': self.controller.ink_revision,
                                        'requestId': data.get('requestId'), 'indices': []})
             return
         # Send the complete resulting ink before its selection indices. This also
         # acknowledges no-op transforms, which do not emit a mutation signal.
         self._sync_web_strokes_updated(-1)
         self.web_server.broadcast({'type': 'note_ink_edit_result', 'ok': True,
-                                   'documentId': self.store.active_id, 'inkRevision': self.controller.ink_revision,
+                                   'documentId': getattr(self, '_document_id', self.store.active_id), 'inkRevision': self.controller.ink_revision,
                                    'requestId': data.get('requestId'), 'indices': indices})
         # No-op edits still need the final saved acknowledgement after the
         # tablet has shown a local pending state. Keep disk work off this slot.
@@ -266,7 +296,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
             timer.start()
 
     def _get_web_status_legacy(self):
-        return {'documentId': self.store.active_id, 'noteId': self.store.active_id,
+        return {'documentId': self._document_id, 'noteId': self._document_id,
                 'inkRevision': self.controller.ink_revision,
                 'paperAspect': self.store.active.get('aspect', 4 / 3),
                 'title': self.store.active['title'], 'paper': self.store.active.get('paper', 'plain'),
@@ -279,12 +309,12 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
                 'canRedo': bool(self.controller.redo_stack)}
 
     def _sync_web_strokes_updated(self, index):
-        self.web_server.broadcast({'type': 'strokes_updated', 'documentId': self.store.active_id,
+        self.web_server.broadcast({'type': 'strokes_updated', 'documentId': self._document_id,
                                    'inkRevision': self.controller.ink_revision, 'strokes': self.controller.serialized_ink()})
         self.web_server.broadcast({'type': 'note_history', 'canUndo': bool(self.controller.undo_stack), 'canRedo': bool(self.controller.redo_stack)})
 
     def _sync_web_stroke_finished(self, index):
-        self.web_server.broadcast({'type': 'strokes_updated', 'documentId': self.store.active_id,
+        self.web_server.broadcast({'type': 'strokes_updated', 'documentId': self._document_id,
                                    'inkRevision': self.controller.ink_revision, 'strokes': self.controller.serialized_ink()})
         QTimer.singleShot(0, lambda: self.web_server.broadcast({'type': 'note_history', 'canUndo': bool(self.controller.undo_stack), 'canRedo': bool(self.controller.redo_stack)}))
 
@@ -292,7 +322,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
         self._sync_web_strokes_updated(index)
 
     def _sync_web_texts_updated(self, index):
-        self.web_server.broadcast({'type': 'note_texts_updated', 'documentId': self.store.active_id,
+        self.web_server.broadcast({'type': 'note_texts_updated', 'documentId': self._document_id,
                                    'inkRevision': self.controller.ink_revision,
                                    'texts': [annotation_payload(item, self.store.active.get('aspect', 4 / 3))
                                              for item in self.controller.sketchbook_texts]})
@@ -335,6 +365,23 @@ class NotebookWindow(NotebookFilesMixin, NotebookLibraryMixin, MainWindow):
         for stroke in self.controller.sketchbook_strokes:
             paint_ink(painter, stroke, QRectF(0, 0, width, height))
         paint_note_texts(painter, self.controller.sketchbook_texts, QRectF(0, 0, width, height))
+        painter.end()
+        return image
+
+    def render_notebook_page_image(self, page):
+        if page['id'] == self.store.active_page['id']:
+            return self.render_current_page_image_with_sketch()
+        aspect = page.get('aspect', 4 / 3)
+        width, height = 1600, round(1600 / aspect)
+        image = QPixmap(width, height)
+        image.fill(Qt.GlobalColor.white)
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(0, 0, width, height)
+        paint_paper(painter, rect, page.get('paper', 'plain'))
+        for stroke in page.get('strokes', []):
+            paint_ink(painter, Stroke(**stroke), rect)
+        paint_note_texts(painter, [prepare_text(item, aspect) for item in page.get('texts', [])], rect)
         painter.end()
         return image
 
