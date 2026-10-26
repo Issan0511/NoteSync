@@ -119,6 +119,7 @@ INPUT_SCRIPT = PEN_PROTOCOL_SCRIPT + r"""
 
     function onInkStart(e) {
       if (typeof canEditNotebook === 'function' && !canEditNotebook()) return;
+      if (currentTool === 'lasso' && !isPenEraser(e)) return;
       if (e.pointerType === 'pen') {
         penInRange = true;
         penContactArmed = true;
@@ -152,7 +153,7 @@ INPUT_SCRIPT = PEN_PROTOCOL_SCRIPT + r"""
     function beginInkAt(pos, tool, pressure = 1) {
       inkTool = tool;
       if (inkTool === 'eraser') { sendWS({type:'erase_start'}); eraseAt(pos); return; }
-      if (!inkTool || inkTool === 'pointer') return;
+      if (!inkTool || inkTool === 'pointer' || inkTool === 'lasso') return;
       inkLineMode = isLineMode;
       inkMeta = {color:currentColor, width_ratio:getCurrentWidthRatio(), opacity:getToolOpacity(),
         brush:typeof getCurrentBrush === 'function' ? getCurrentBrush() : inkTool === 'highlighter' ? 'highlighter' : 'pen'};

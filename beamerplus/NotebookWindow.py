@@ -130,6 +130,9 @@ class NotebookWindow(MainWindow):
 
     def _on_notebook_command(self, data):
         kind = data.get('type')
+        if kind == 'note_ink_edit':
+            self._on_ink_edit(data)
+            return
         if kind in ('note_new', 'note_select'):
             target = str(data.get('id', ''))
             if kind == 'note_select' and not any(note['id'] == target for note in self.store.notes):
@@ -163,8 +166,29 @@ class NotebookWindow(MainWindow):
             self.save_notebook()
         self.web_server.broadcast(dict(self._get_web_status(), type='state_sync'))
 
+    def _on_ink_edit(self, data):
+        try:
+            if data.get('documentId') != self.store.active_id:
+                raise ValueError('別のノートが開かれています。もう一度囲んで選択してください。')
+            indices = self.controller.apply_ink_edit(data)
+            self._finish_erase()
+        except (ValueError, TypeError, OverflowError) as exc:
+            self.web_server.broadcast({'type': 'note_error', 'message': str(exc)})
+            self.web_server.broadcast(dict(self._get_web_status(), type='state_sync'))
+            self.web_server.broadcast({'type': 'note_ink_edit_result', 'ok': False,
+                                       'documentId': self.store.active_id, 'inkRevision': self.controller.ink_revision,
+                                       'requestId': data.get('requestId'), 'indices': []})
+            return
+        # Send the complete resulting ink before its selection indices. This also
+        # acknowledges no-op transforms, which do not emit a mutation signal.
+        self._sync_web_strokes_updated(-1)
+        self.web_server.broadcast({'type': 'note_ink_edit_result', 'ok': True,
+                                   'documentId': self.store.active_id, 'inkRevision': self.controller.ink_revision,
+                                   'requestId': data.get('requestId'), 'indices': indices})
+
     def _get_web_status(self):
         return {'documentId': self.store.active_id, 'noteId': self.store.active_id,
+                'inkRevision': self.controller.ink_revision,
                 'paperAspect': self.store.active.get('aspect', 4 / 3),
                 'title': self.store.active['title'], 'paper': self.store.active.get('paper', 'plain'),
                 'notes': [{'id': note['id'], 'title': note['title']} for note in self.store.notes],
@@ -174,12 +198,17 @@ class NotebookWindow(MainWindow):
                 'canRedo': bool(self.controller.redo_stack)}
 
     def _sync_web_strokes_updated(self, index):
-        self.web_server.broadcast({'type': 'strokes_updated', 'strokes': self.controller.serialized_ink()})
+        self.web_server.broadcast({'type': 'strokes_updated', 'documentId': self.store.active_id,
+                                   'inkRevision': self.controller.ink_revision, 'strokes': self.controller.serialized_ink()})
         self.web_server.broadcast({'type': 'note_history', 'canUndo': bool(self.controller.undo_stack), 'canRedo': bool(self.controller.redo_stack)})
 
     def _sync_web_stroke_finished(self, index):
-        self.web_server.broadcast({'type': 'strokes_updated', 'strokes': self.controller.serialized_ink()})
+        self.web_server.broadcast({'type': 'strokes_updated', 'documentId': self.store.active_id,
+                                   'inkRevision': self.controller.ink_revision, 'strokes': self.controller.serialized_ink()})
         QTimer.singleShot(0, lambda: self.web_server.broadcast({'type': 'note_history', 'canUndo': bool(self.controller.undo_stack), 'canRedo': bool(self.controller.redo_stack)}))
+
+    def _sync_web_strokes_cleared(self, index):
+        self._sync_web_strokes_updated(index)
 
     def _on_web_erase_requested(self, data):
         super()._on_web_erase_requested(data)

@@ -498,7 +498,7 @@ class WebServer:
 
     def _handle_client_message(self, data: dict):
         msg_type = data.get("type")
-        if msg_type in ('note_new', 'note_select', 'note_title', 'note_paper', 'note_save'):
+        if msg_type in ('note_new', 'note_select', 'note_title', 'note_paper', 'note_save', 'note_ink_edit'):
             self.bridge.notebook_command.emit(data)
         elif msg_type == 'erase_start':
             self.bridge.erase_started.emit()

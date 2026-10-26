@@ -4,12 +4,67 @@ from copy import deepcopy
 from dataclasses import asdict
 import json
 import hashlib
+import math
 import os
 from pathlib import Path
+import re
 import tempfile
 import uuid
 
 from beamerplus.DrawingModel import PresentationController, Stroke
+
+
+class InkEditConflict(ValueError):
+    """The selected ink no longer matches the client's displayed revision."""
+
+
+def _finite_number(value, lower, upper):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError('選択した線の編集データが正しくありません。')
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise ValueError('選択した線の編集データが正しくありません。') from exc
+    if not math.isfinite(number) or not lower <= number <= upper:
+        raise ValueError('選択した線の編集データが正しくありません。')
+    return number
+
+
+def _edit_matrix(data, default=None):
+    matrix = data.get('matrix', default if default is not None else [1, 0, 0, 1, 0, 0])
+    if not isinstance(matrix, (list, tuple)) or len(matrix) != 6:
+        raise ValueError('選択した線の移動データが正しくありません。')
+    return [_finite_number(value, -16, 16) for value in matrix]
+
+
+def _transform_stroke(stroke, matrix, width_scale):
+    a, b, c, d, e, f = matrix
+    result = deepcopy(stroke)
+    result.points = [(_finite_number(a * point[0] + c * point[1] + e, -4, 5),
+                      _finite_number(b * point[0] + d * point[1] + f, -4, 5),
+                      *point[2:]) for point in stroke.points]
+    result.width_ratio = _finite_number(stroke.width_ratio * width_scale, .0001, .8)
+    return result
+
+
+def _clipboard_stroke(data):
+    if not isinstance(data, dict) or set(data) - {'color', 'width_ratio', 'opacity', 'points', 'brush'}:
+        raise ValueError('貼り付ける線のデータが正しくありません。')
+    color = data.get('color')
+    brush = data.get('brush', 'pen')
+    if not isinstance(color, str) or re.fullmatch(r'#[0-9a-fA-F]{6}', color) is None or brush not in ('pen', 'fountain', 'pencil', 'highlighter'):
+        raise ValueError('貼り付ける線のスタイルが正しくありません。')
+    raw_points = data.get('points')
+    if not isinstance(raw_points, list) or not 1 <= len(raw_points) <= 100000:
+        raise ValueError('貼り付ける線の点数が正しくありません。')
+    points = []
+    for point in raw_points:
+        if not isinstance(point, (tuple, list)) or len(point) not in (2, 3):
+            raise ValueError('貼り付ける線の座標が正しくありません。')
+        points.append((_finite_number(point[0], -4, 5), _finite_number(point[1], -4, 5),
+                       _finite_number(point[2] if len(point) == 3 else 1, 0, 1)))
+    return Stroke(color=color, width_ratio=_finite_number(data.get('width_ratio'), .0001, .8),
+                  opacity=_finite_number(data.get('opacity'), .05, 1), points=points, brush=brush)
 
 
 class NotebookStore:
@@ -81,6 +136,15 @@ class NotebookController(PresentationController):
         self.undo_stack = []
         self.redo_stack = []
         self.pending_edit = None
+        self.ink_revision = 0
+        # Connect before a view/server attaches: every published mutation carries
+        # its new revision, including changes while another pen is still down.
+        for signal in (self.stroke_started, self.stroke_added_point, self.stroke_line_updated,
+                       self.strokes_updated, self.strokes_cleared):
+            signal.connect(self._advance_ink_revision)
+
+    def _advance_ink_revision(self, *args):
+        self.ink_revision += 1
 
     def snapshot(self):
         return deepcopy(self.sketchbook_strokes)
@@ -144,3 +208,72 @@ class NotebookController(PresentationController):
 
     def serialized_ink(self):
         return [asdict(stroke) for stroke in self.sketchbook_strokes]
+
+    def apply_ink_edit(self, data):
+        """Validate a selection edit completely, then commit it as one undo step.
+
+        Matrix ordering follows Canvas 2D: x' = ax + cy + e, y' = bx + dy + f.
+        Indices refer to the exact ink_revision the client selected.
+        """
+        revision = data.get('baseRevision')
+        if type(revision) is not int or revision != self.ink_revision:
+            raise InkEditConflict('ノートの線が更新されました。もう一度囲んで選択してください。')
+        action = data.get('action')
+        if action not in ('transform', 'delete', 'duplicate', 'style', 'paste'):
+            raise ValueError('選択した線の操作が正しくありません。')
+        raw_indices = data.get('indices', [])
+        if not isinstance(raw_indices, list) or len(raw_indices) > 10000 or any(type(index) is not int or not 0 <= index < len(self.sketchbook_strokes) for index in raw_indices):
+            raise ValueError('選択した線が見つかりません。もう一度選択してください。')
+        indices = sorted(set(raw_indices))
+        if action != 'paste' and not indices:
+            raise ValueError('編集する線を囲んで選択してください。')
+
+        edited = self.snapshot()
+        selected = [edited[index] for index in indices]
+        if action in ('transform', 'duplicate', 'paste'):
+            default_matrix = [1, 0, 0, 1, .02, .02] if action == 'duplicate' else None
+            matrix = _edit_matrix(data, default_matrix)
+            width_scale = _finite_number(data.get('widthScale', 1), .1, 10)
+        if action == 'transform':
+            for index in indices:
+                edited[index] = _transform_stroke(edited[index], matrix, width_scale)
+        elif action == 'delete':
+            selected_indices = set(indices)
+            edited = [stroke for index, stroke in enumerate(edited) if index not in selected_indices]
+            indices = []
+        elif action in ('duplicate', 'paste'):
+            if action == 'paste':
+                raw_strokes = data.get('strokes')
+                if not isinstance(raw_strokes, list) or not 1 <= len(raw_strokes) <= 1000:
+                    raise ValueError('貼り付ける線の数が正しくありません。')
+                if sum(len(stroke.get('points', [])) if isinstance(stroke, dict) and isinstance(stroke.get('points'), list) else 100001 for stroke in raw_strokes) > 100000:
+                    raise ValueError('一度に貼り付ける線が多すぎます。')
+                selected = [_clipboard_stroke(stroke) for stroke in raw_strokes]
+            additions = [_transform_stroke(stroke, matrix, width_scale) for stroke in selected]
+            indices = list(range(len(edited), len(edited) + len(additions)))
+            edited.extend(additions)
+        elif action == 'style':
+            style = {}
+            if 'color' in data:
+                color = data['color']
+                if not isinstance(color, str) or re.fullmatch(r'#[0-9a-fA-F]{6}', color) is None:
+                    raise ValueError('線の色が正しくありません。')
+                style['color'] = color
+            if 'opacity' in data:
+                style['opacity'] = _finite_number(data['opacity'], .1, 1)
+            if 'widthRatio' in data:
+                style['width_ratio'] = _finite_number(data['widthRatio'], .0005, .08)
+            if not style:
+                raise ValueError('変更する線のスタイルを選んでください。')
+            for stroke in selected:
+                for key, value in style.items():
+                    setattr(stroke, key, value)
+
+        # Invalid requests never finish a pen gesture or disturb its undo state.
+        self.end_stroke()
+        if edited != self.sketchbook_strokes:
+            self.begin_edit()
+            self.sketchbook_strokes = edited
+            self.finish_edit()
+            self.strokes_updated.emit(-1)
+        return indices

@@ -443,3 +443,17 @@ test('brush, opacity and actual pressure travel with a stroke', () => {
   assert.equal(stroke.points.at(-1)[2], .8);
   assert.equal(h.state().sent.find(e=>e.type==='stroke_start').brush, 'fountain');
 });
+
+test('lasso tool cannot accidentally deposit pen ink, including barrel release mid-contact', () => {
+  const h=harness();
+  h.evaluate("currentTool='lasso'");
+  h.fire('pointerdown');h.fire('pointermove',{clientX:400});h.fire('pointerup');
+  assert.equal(h.state().slideStrokes.length,0);
+  h.fire('pointerdown',{buttons:3,button:2});
+  h.fire('pointermove',{buttons:3,button:-1,clientX:300});
+  h.fire('pointermove',{buttons:1,button:2,clientX:400});
+  h.fire('pointerup',{clientX:400});
+  assert.equal(h.state().slideStrokes.length,0);
+  assert.equal(h.state().sent.filter(m=>m.type==='stroke_start').length,0);
+  assert.ok(h.state().sent.some(m=>m.type==='erase'));
+});
