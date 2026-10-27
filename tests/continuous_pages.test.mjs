@@ -5,7 +5,8 @@ import {test} from 'node:test';
 
 const source=fs.readFileSync(new URL('../beamerplus/TabletContinuous.py',import.meta.url),'utf8').split('CONTINUOUS_SCRIPT = r"""')[1].split('"""')[0];
 function section(start,end){return source.slice(source.indexOf(start),source.indexOf(end));}
-const geometry=section('notebookView.zoomAt=function','function continuousRow');
+const geometry=section('function notebookFitScale','function continuousRow');
+const fit=section('function fitNotebookPage','function scrollNotebookWheel');
 const wheel=section('function scrollNotebookWheel','function sidebarPaperVisible');
 const queue=section('function queuedPaperPoint','stage.addEventListener(\'pointerdown\',event=>{const row');
 
@@ -14,6 +15,7 @@ function harness(){
   vm.runInContext(`
     const sent=[],painted=[],replayed=[],toasts=[],timers=new Map();let timerId=0;
     const notebookView={scale:1,x:0,y:0},continuousWidth=600,continuousHeight=2500;
+    const slideWrapper={clientHeight:800},paperAspect=.75;
     const row={id:'second',top:820,height:800,meta:{aspect:.75},node:{dataset:{pageId:'second'},getBoundingClientRect:()=>({left:20,top:100,width:600,height:800})}};
     const continuousPages=new Map([['first',{id:'first',top:0,height:800}],['second',row],['third',{id:'third',top:1640,height:800}]]);
     const stage={clientHeight:600,clientWidth:640,getBoundingClientRect:()=>({left:0,top:0,width:640,height:600}),captures:new Set(),setPointerCapture(id){this.captures.add(id);},hasPointerCapture(id){return this.captures.has(id);},releasePointerCapture(id){this.captures.delete(id);}};
@@ -38,7 +40,7 @@ function harness(){
     function moveInkTo(pos,pressure){replayed.push({phase:'move',pos,pressure});}
     function finishInkStroke(){isDrawing=false;replayed.push({phase:'end'});}
     function renderInkSelection(){}function showToast(message){toasts.push(message);}
-  `+geometry+wheel+queue,context);
+  `+geometry+fit+wheel+queue,context);
   const run=code=>vm.runInContext(code,context);
   const read=code=>JSON.parse(run(`JSON.stringify((${code})??null)`));
   const event=(overrides={})=>({target:run('row.node'),pointerType:'pen',pointerId:12,clientX:320,clientY:500,pressure:.6,buttons:1,button:0,preventDefault(){this.prevented=true;},stopImmediatePropagation(){this.stopped=true;},...overrides});
@@ -66,6 +68,28 @@ test('pinch zoom keeps the same paper point under the gesture and clamps the ful
   assert.deepEqual(h.read('notebookView'),{scale:2,x:0,y:-2080});
   h.run('notebookView.zoomAt(1,{x:320,y:300})');assert.equal(h.read('notebookView.y'),-900,'100% must not jump to the first page');
   h.run('notebookView.y=-99999;notebookView.constrain(640,600)');assert.equal(h.read('notebookView.y'),-1940);
+});
+
+test('zoom-out and pinch can go below 100% down to a complete portrait page',()=>{
+  const h=harness();h.run('notebookView.zoomAt(.01,{x:320,y:300});refreshNotebookView()');
+  assert.equal(h.read('notebookView.scale'),.7);
+  assert.ok(h.read('800*notebookView.scale')<=560);
+  h.run('notebookView.zoomAt(.9,{x:320,y:300})');assert.equal(h.read('notebookView.scale'),.9);
+});
+
+test('fit shows the current page instead of jumping back to the first page or fitting the entire book',()=>{
+  const h=harness();h.run('currentDocumentId="second";notebookView.scale=3;notebookView.x=120;fitNotebookPage()');
+  assert.equal(h.read('notebookView.scale'),.7);assert.equal(h.read('notebookView.x'),0);
+  const top=h.read('20+notebookView.y+row.top*notebookView.scale');
+  assert.equal(top,20);assert.equal(h.read('20+notebookView.y+(row.top+row.height)*notebookView.scale'),580);
+  assert.deepEqual(h.read('sent'),[],'fitting is a local view change');
+});
+
+test('fit adapts to viewport height and mixed paper sizes without a page switch changing minimum zoom',()=>{
+  const h=harness();h.run('stage.clientHeight=400;continuousPages.get("third").height=1200');
+  assert.equal(h.run('notebookMinimumScale()'),.3);assert.equal(h.run('notebookFitScale("second")'),.45);
+  h.run('notebookView.scale=.3;currentDocumentId="second";refreshNotebookView()');assert.equal(h.read('notebookView.scale'),.3);
+  h.run('stage.clientHeight=700;fitNotebookPage()');assert.equal(h.read('notebookView.scale'),.825);
 });
 
 test('the first stroke on an inactive paper is buffered with pressure and original normalized coordinates',()=>{

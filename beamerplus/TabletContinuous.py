@@ -48,11 +48,22 @@ const continuousPages=new Map(),continuousCache=new Map(),continuousReads=new Ma
 let continuousNotebook='',continuousWidth=600,continuousHeight=450,continuousLayoutKey='',continuousPreserveView=false,continuousIntent=null,continuousAutoSelect=false,continuousFrame=null,continuousSettleTimer=null,continuousReadSequence=0,continuousSidebarOpen=false,continuousPreviewQueue=[],continuousScrollDrag=null,continuousInkQueue=null;
 const continuousReset=notebookView.reset.bind(notebookView);
 notebookView.reset=function(){if(!continuousPreserveView)continuousReset();};
+function notebookFitScale(pageId=currentDocumentId){
+  const height=continuousPages.get(pageId)?.height||slideWrapper.clientHeight||continuousWidth/paperAspect;
+  return Math.max(.01,Math.min(1,Math.max(1,stage.clientHeight-40)/height,Math.max(1,stage.clientWidth-40)/continuousWidth));
+}
+function notebookMinimumScale(){
+  let tallest=slideWrapper.clientHeight||continuousWidth/paperAspect;
+  for(const row of continuousPages.values())if(row.height>tallest)tallest=row.height;
+  return Math.max(.01,Math.min(1,Math.max(1,stage.clientHeight-40)/tallest,Math.max(1,stage.clientWidth-40)/continuousWidth));
+}
 notebookView.zoomAt=function(scale,point){
-  const next=Math.max(1,Math.min(5,scale)),ratio=next/this.scale,r=stage.getBoundingClientRect(),px=point.x-r.left-r.width/2,py=point.y-r.top-20;
+  const next=Math.max(notebookMinimumScale(),Math.min(5,scale)),ratio=next/this.scale,r=stage.getBoundingClientRect(),px=point.x-r.left-r.width/2,py=point.y-r.top-20;
   this.x=px-(px-this.x)*ratio;this.y=py-(py-this.y)*ratio;this.scale=next;
 };
 notebookView.constrain=function(width,height){
+  const next=Math.max(notebookMinimumScale(),Math.min(5,this.scale));
+  if(next!==this.scale){const ratio=next/this.scale;this.x*=ratio;this.y*=ratio;this.scale=next;}
   const maxX=Math.max(0,(continuousWidth*this.scale-width)/2+20);
   this.x=Math.max(-maxX,Math.min(maxX,this.x));this.y=Math.max(Math.min(0,height-40-continuousHeight*this.scale),Math.min(0,this.y));
 };
@@ -100,15 +111,16 @@ function layoutContinuousPaper(){
 }
 adjustLayout=function(){finishActiveInput();layoutContinuousPaper();};
 refreshNotebookView=function(redraw=false){
+  const previousScale=notebookView.scale;
   notebookView.constrain(stage.clientWidth,stage.clientHeight);paperStack.style.transform=`translateX(-50%) translate(${notebookView.x}px,${notebookView.y}px) scale(${notebookView.scale})`;slideWrapper.style.setProperty('--view-scale',notebookView.scale);
-  $('zoom-fit').textContent=`${Math.round(notebookView.scale*100)}%`;$('zoom-out').disabled=notebookView.scale<=1;$('zoom-in').disabled=notebookView.scale>=5;
+  $('zoom-fit').textContent=`${Math.round(notebookView.scale*100)}%`;$('zoom-out').disabled=notebookView.scale<=notebookMinimumScale()+1e-8;$('zoom-in').disabled=notebookView.scale>=5;
   const full=continuousHeight*notebookView.scale,track=Math.max(1,stage.clientHeight-16),thumb=Math.min(track,Math.max(24,track*stage.clientHeight/Math.max(1,full)));$('notebook-scroll-thumb').style.height=thumb+'px';$('notebook-scroll-thumb').style.top=(track-thumb)*(-notebookView.y/Math.max(1,full-stage.clientHeight+40))+'px';notebookScrollRail.hidden=full<=stage.clientHeight;
   if(typeof positionSelectionToolbar==='function')positionSelectionToolbar();if(typeof refreshEraserCursor==='function')refreshEraserCursor();
-  if(redraw)refreshNotebookResolution();scheduleContinuousPaint();
+  if(redraw||previousScale!==notebookView.scale)refreshNotebookResolution();scheduleContinuousPaint();
 };
 function scheduleContinuousPaint(){if(continuousFrame!==null)return;continuousFrame=requestAnimationFrame(()=>{continuousFrame=null;for(const row of continuousPages.values())paintContinuousRow(row);loadVisiblePaperPreviews();});}
 function scrollToNotebookPage(id){const row=continuousRow(id);if(!row)return;notebookView.y=-row.top*notebookView.scale;refreshNotebookView();}
-$('zoom-fit').addEventListener('click',()=>scrollToNotebookPage(currentDocumentId));
+function fitNotebookPage(){finishActiveInput();notebookView.scale=notebookFitScale();notebookView.x=0;notebookView.y=-(continuousRow(currentDocumentId)?.top||0)*notebookView.scale;refreshNotebookView(true);}
 function scrollNotebookWheel(event){event.preventDefault();if(isDrawing||typeof selectionPointerActive==='function'&&selectionPointerActive())return;finishActiveInput();if(event.ctrlKey||event.metaKey)notebookView.zoomAt(notebookView.scale*Math.exp(-event.deltaY*.007),{x:event.clientX,y:event.clientY});else{const unit=event.deltaMode===1?18:event.deltaMode===2?stage.clientHeight:1;notebookView.y-=event.deltaY*unit;notebookView.x-=event.deltaX*unit;}refreshNotebookView(!!(event.ctrlKey||event.metaKey));settleNotebookScroll();}
 function settleNotebookScroll(){
   clearTimeout(continuousSettleTimer);continuousSettleTimer=setTimeout(()=>{

@@ -789,7 +789,7 @@ class MainWindow(QMainWindow):
         threshold = max(0.008, eraser_size * 0.001)
         if 'radius' in data:
             radius = data['radius']
-            if type(radius) not in (int, float) or not math.isfinite(radius) or not 0 < radius <= .5:
+            if type(radius) not in (int, float) or not math.isfinite(radius) or not 0 < radius <= 8:
                 return
             # Already normalized against the tablet's zoomed paper height.
             # Reapplying the legacy minimum here would enlarge a zoomed eraser.

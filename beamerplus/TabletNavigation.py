@@ -56,7 +56,7 @@ function zoomNotebook(scale,point=viewCenter()){
 }
 $('zoom-in').addEventListener('click',()=>zoomNotebook(notebookView.scale*1.35));
 $('zoom-out').addEventListener('click',()=>zoomNotebook(notebookView.scale/1.35));
-$('zoom-fit').addEventListener('click',()=>{finishActiveInput();notebookView.reset();refreshNotebookView(true);});
+$('zoom-fit').addEventListener('click',()=>{if(typeof fitNotebookPage==='function'){fitNotebookPage();return;}finishActiveInput();notebookView.reset();refreshNotebookView(true);});
 stage.addEventListener('wheel',e=>{
   if(e.target.closest('button,input,select,textarea'))return;
   if(typeof scrollNotebookWheel==='function'){scrollNotebookWheel(e);return;}

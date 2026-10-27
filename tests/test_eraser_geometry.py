@@ -70,8 +70,10 @@ class EraserGeometryTests(unittest.TestCase):
         self.assertEqual(calls[-1][1]['aspect_ratio'], .75)
         MainWindow._on_web_erase_requested(host, dict(normX=.5, normY=.5, mode='stroke', size=5))
         self.assertEqual(calls[-1][1]['threshold'], .008,'legacy clients keep their old radius')
+        MainWindow._on_web_erase_requested(host, dict(size=70, radius=.7))
+        self.assertEqual(calls[-1][1]['threshold'], .7,'a fixed-size circle can span a deeply zoomed-out page')
         before = len(calls)
-        for radius in (None, True, '0.01', math.nan, math.inf, -1, 0, .6):
+        for radius in (None, True, '0.01', math.nan, math.inf, -1, 0, 9):
             MainWindow._on_web_erase_requested(host, dict(size=25, radius=radius))
         self.assertEqual(len(calls), before)
 
