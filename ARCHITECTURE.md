@@ -7,7 +7,7 @@ flowchart LR
   Tablet[タブレット] <--> Sync[NoteSync: 原稿・保存・同期]
   Sync <--> Chat[MCPを使う会話]
   Tutor[NoteTutor: 学習支援] -->|ExtensionHost v1| Sync
-  Tutor -->|明示した質問・有効化した転記| API[モデルAPI]
+  Tutor -.->|任意のClaude機能を有効化した場合| API[モデルAPI]
   Submit[KulmsSubmit: 要件確認・提出] -->|保存確定・JSON・PDFコマンド| Sync
   Submit -->|本人の完成・提出指示後| LMS[KULMS]
 ```

@@ -5,7 +5,7 @@
 | プロジェクト | 担当 | 追加で必要なもの |
 | --- | --- | --- |
 | **NoteSync**（このリポジトリ） | 編集、科目・添付資料、保存、同期、MCP、PDF書き出し | なし |
-| **NoteTutor**（`../NoteTutor`） | 学習支援の指示、質問応答、手書き転記 | NoteSyncの拡張API、Claude機能にはAnthropic APIキー |
+| **NoteTutor**（`../NoteTutor`） | MCPを使った学習支援 | NoteSyncの拡張API。Claude機能は任意 |
 | **KulmsSubmit**（`../KulmsSubmit`） | 大学認証、課題要件・答案確認、アップロード・提出 | KULMS認証。ノートPDF化時だけNoteSyncの書き出しコマンド |
 
 NoteSyncはNoteTutorとKulmsSubmitを入れなくても動作します。モデルへの通信、APIキーの読込、大学への提出はコアに含みません。構成と公開インターフェースは [ARCHITECTURE.md](ARCHITECTURE.md) にまとめています。
@@ -25,7 +25,7 @@ python3 -m venv .venv
 .venv/bin/notetutor
 ```
 
-インストール済みの拡張は `notesync.extensions` から読み込みます。ノート単独で起動するには `NOTESYNC_DISABLE_EXTENSIONS=1 .venv/bin/notesync`、チューターを取り外すには `.venv/bin/python -m pip uninstall note-tutor` を使います。モデル設定と `.env` はNoteTutorが管理します。
+インストール済みの拡張は `notesync.extensions` から読み込みます。ノート単独で起動するには `NOTESYNC_DISABLE_EXTENSIONS=1 .venv/bin/notesync`、チューターを取り外すには `.venv/bin/python -m pip uninstall note-tutor` を使います。Claude機能は既定で無効です。有効にする場合のモデル設定と `.env` はNoteTutorが管理します。
 
 PCの「タブレット接続 · QR」を開き、タブレットでQRコードを読み取ってください。同じTailnetではTailscaleの接続先を優先し、確認済みの端末とこのPCはパスコード入力を省略できます。通常のLAN接続ではパスコード付きURLを使います。
 

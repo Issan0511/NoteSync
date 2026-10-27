@@ -163,7 +163,7 @@ def create_server(connection_file=None, *, observation_interval=30):
     @server.tool(annotations=read_only)
     def read_note_context(since_revision: str | None = None) -> dict:
         """Read cached handwriting as LaTeX/text, with no image, network OCR or waiting.
-        Prefer this for tutoring. Returns freshness, pen state, uncertain symbols, normalized region bounds,
+        If optional transcription is enabled, returns freshness, pen state, uncertain symbols, normalized region bounds,
         API/capture timings and recognition_lag_ms (not voice end-to-end latency).
         With the previous context_revision, returns changed blocks and removed_block_ids;
         full_snapshot=true means replace your old snapshot. Unchanged blocks must be reused locally.
@@ -175,7 +175,7 @@ def create_server(connection_file=None, *, observation_interval=30):
     @server.tool(annotations=read_only)
     def read_current_note() -> list:
         """Read the currently open NoteSync note as a fresh PNG and metadata. Includes live ink and tutor text.
-        Use as a visual fallback or before choosing where to write. Prefer read_note_context for routine tutoring. Returns note_id,
+        Use for tutoring and before choosing where to write. Optional transcription is available through read_note_context. Returns note_id,
         revision, aspect, text IDs and normalized bounds. Also returns page_id, page_index (zero-based)
         and page_count within the notebook. Image dimensions are 1600px wide.
         """
@@ -186,7 +186,7 @@ def create_server(connection_file=None, *, observation_interval=30):
     @server.tool(annotations=read_only)
     def get_note_status() -> dict:
         """Check the open note's ID, revision, title and tutor text without fetching its image.
-        A changed revision means refresh read_note_context for tutoring; read_current_note before writing.
+        A changed revision means refresh the note before tutoring or writing.
         """
         return client.call('get_note_status')
 
