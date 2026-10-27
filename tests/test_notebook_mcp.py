@@ -101,6 +101,22 @@ class NotebookMCPTests(unittest.TestCase):
         self.assertEqual(controller.sketchbook_texts, [])
 
     @unittest.skipUnless(importlib.util.find_spec('mcp'), 'Install the optional MCP dependency to run protocol tests')
+    def test_submission_source_flushes_saved_note_without_switching_pages(self):
+        from beamerplus.NotebookStorage import note_digest
+        note_id = self.window.store.active['id']
+        controller = self.window.controller
+        controller.begin_custom_stroke('#000000', .005, 1, .1, .2)
+        with self.assertRaisesRegex(ValueError, '筆記'):
+            self.window._handle_mcp_call('save_note_snapshot', {'note_id': note_id})
+        controller.end_stroke()
+        result = self.call_in_worker(lambda: self.client.call('save_note_snapshot', note_id=note_id))
+        self.assertTrue(result['saved'])
+        self.assertEqual(result['store_path'], str(self.path / 'notes.json'))
+        saved = json.loads((self.path / 'notes.json').read_text())['notes'][0]
+        self.assertEqual(result['content_hash'], note_digest(saved))
+        self.assertEqual(self.window.store.active['id'], note_id)
+
+
     def test_real_stdio_mcp_discovery_image_and_undoable_write(self):
         import sys
         from mcp import ClientSession, StdioServerParameters

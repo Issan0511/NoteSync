@@ -74,10 +74,16 @@ class NotebookStore:
 
     def __init__(self, path):
         self.path = Path(path)
+        self.directory = None
+        if self.path.suffix.lower() != '.json':
+            from .NotebookStorage import DirectoryLibrary
+            self.directory = DirectoryLibrary(self.path)
+            self.directory.migrate(self.path.parent / 'notebooks.json')
         self.notes = []
         self.active_id = None
-        if self.path.exists():
-            data = json.loads(self.path.read_text())
+        data = self.directory.load() if self.directory else (
+            json.loads(self.path.read_text()) if self.path.exists() else None)
+        if data is not None:
             if data.get('version') != 1 or not isinstance(data.get('notes'), list):
                 raise ValueError('ノート保存ファイルの形式を確認してください')
             self.notes = data['notes']
@@ -225,6 +231,11 @@ class NotebookStore:
     def save(self):
         for note in self.notes:
             self.sync_active_page(note)
+        if self.directory is not None:
+            saved = self.directory.save(self.notes, self.active_id)
+            for current, stored in zip(self.notes, saved):
+                current.update(course=stored['course'], attachments=stored['attachments'])
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         content = json.dumps({'version': 1, 'activeId': self.active_id, 'notes': self.notes}, ensure_ascii=False)
         temporary = None
@@ -238,6 +249,19 @@ class NotebookStore:
         finally:
             if temporary and os.path.exists(temporary):
                 os.unlink(temporary)
+
+    def portable_notes(self, note_id=None):
+        notes = self.notes if note_id is None else [n for n in self.notes if n['id'] == note_id]
+        return self.directory.portable_notes(notes) if self.directory else deepcopy(notes)
+
+    def read_attachment(self, note, attachment_id):
+        if self.directory:
+            return self.directory.read_attachment(note, attachment_id)
+        import base64
+        item = next((a for a in note.get('attachments', []) if a['id'] == attachment_id), None)
+        if item is None:
+            raise ValueError('添付資料がありません。')
+        return item['name'], base64.b64decode(item['data'], validate=True)
 
     def import_ink(self, strokes, aspect=16 / 9):
         if not strokes:

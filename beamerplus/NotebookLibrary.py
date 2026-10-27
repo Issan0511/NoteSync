@@ -2,7 +2,7 @@
 
 The window supplies its existing save/status/command methods as ``*_legacy``
 hooks. Keeping this mixin separate lets notebook storage and MCP integrations
-continue to share the same controller and version-1 JSON file.
+continue to share the same controller and notebook store.
 """
 
 from copy import deepcopy
@@ -187,6 +187,9 @@ class NotebookLibraryMixin:
             text_count = sum(len(getattr(self.controller, 'sketchbook_texts', [])) if active and page.get('id') == selected
                              else len(page.get('texts', [])) for page in pages)
             metadata.append({'id': note['id'], 'title': note['title'], 'paper': note.get('paper', 'plain'),
+                             'course': note.get('course', '未分類'),
+                             'attachments': [{k: a.get(k) for k in ('id', 'name', 'bytes', 'sha256')}
+                                             for a in note.get('attachments', [])],
                              'aspect': note.get('aspect', 4 / 3), 'strokeCount': stroke_count,
                              'textCount': text_count, 'pageCount': len(pages), 'createdAt': note['createdAt'],
                              'updatedAt': note['updatedAt'], 'deletedAt': note.get('deletedAt')})
@@ -231,7 +234,8 @@ class NotebookLibraryMixin:
     def _library_mutate(self, action, data):
         identifier = data.get('id', self.store.active_id)
         if action == 'new':
-            self.store.new_note(_title(data.get('title', '新しいノート')))
+            from .NotebookStorage import label
+            self.store.new_note(_title(data.get('title', '新しいノート')))['course'] = label(data.get('course'))
         elif action == 'select':
             self.store.active_id = self._library_find(identifier)['id']
         elif action == 'duplicate':
@@ -241,6 +245,13 @@ class NotebookLibraryMixin:
             note.update(id=uuid.uuid4().hex, title=_title(data.get('title', source['title'] + ' のコピー')),
                         createdAt=stamp, updatedAt=stamp, deletedAt=None)
             note.pop('importTag', None)
+            if source.get('attachments'):
+                import base64
+                for item in note['attachments']:
+                    _, raw = self.store.read_attachment(source, item['id'])
+                    item['data'] = base64.b64encode(raw).decode()
+                    item['id'] = uuid.uuid4().hex
+                    item.pop('file', None)
             if hasattr(self.store, 'ensure_pages'):
                 pages = self.store.ensure_pages(note)
                 selected = note['activePageId']
@@ -281,6 +292,9 @@ class NotebookLibraryMixin:
             note['deletedAt'] = None
         elif action == 'rename':
             self._library_find(identifier)['title'] = _title(data.get('title'))
+        elif action == 'course':
+            from .NotebookStorage import label
+            self._library_find(identifier)['course'] = label(data.get('course'))
         elif action == 'paper' and data.get('paper') in ('plain', 'ruled', 'grid'):
             self._library_find(identifier)['paper'] = data['paper']
         else:
@@ -321,7 +335,7 @@ class NotebookLibraryMixin:
         else:
             return self._on_notebook_command_legacy(data)
         self._init_notebook_library()
-        if action not in ('new', 'select', 'duplicate', 'trash', 'restore', 'rename', 'paper', 'save'):
+        if action not in ('new', 'select', 'duplicate', 'trash', 'restore', 'rename', 'course', 'paper', 'save'):
             return self._library_result(action, data, False, 'このノート操作は利用できません。')
         self._library_finish_input()
         if not self.save_notebook():

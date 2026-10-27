@@ -24,7 +24,7 @@ from beamerplus.NotebookWindow import NotebookWindow
 from beamerplus.WebServer import WebBridge, WebServer
 
 
-class NotebookFileIntegrationTests(unittest.TestCase):
+class NotebookFileTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -63,6 +63,8 @@ class NotebookFileIntegrationTests(unittest.TestCase):
         self.assertIs(self.replies[-1][0], self.client)
         return self.replies[-1][1]
 
+
+class NotebookFileIntegrationTests(NotebookFileTestCase):
     def test_mixin_integration_retains_text_library_and_mcp_hooks(self):
         self.draw()
         previous = self.window.store.active_id
@@ -245,6 +247,48 @@ class PrivateReplyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sender.messages, [message])
         self.assertEqual(other.messages, [])
 
+
+class DirectoryNotebookFileTests(NotebookFileTestCase):
+    def setUp(self):
+        super().setUp()
+        from beamerplus.NotebookModel import NotebookStore
+        self.path = Path(self.directory.name) / 'library'
+        original = self.window.store
+        self.window.store = NotebookStore(self.path)
+        self.window.store.notes = deepcopy(original.notes)
+        self.window.store.active_id = original.active_id
+        self.window.store.save()
+
+    # Run the directory-specific integration checks, without inheriting tests
+    # which deliberately read the legacy JSON path themselves.
+    def test_attachment_move_duplicate_backup_and_restore(self):
+        raw = b'course handout'
+        self.assertTrue(self.request('attach', filename='資料.txt', data=base64.b64encode(raw).decode())['ok'])
+        note = self.window.store.active; item = note['attachments'][0]
+        self.assertNotIn('data', item)
+        self.assertTrue(self.window._on_notebook_command(dict(type='note_library', action='course', course='流体力学')))
+        self.assertTrue(self.window._on_notebook_command(dict(type='note_library', action='duplicate')))
+        copied = self.window.store.active['attachments'][0]
+        self.assertNotEqual(item['id'], copied['id'])
+        self.assertEqual(base64.b64decode(self.request('attachment_download', attachmentId=copied['id'])['data']), raw)
+        backup = self.request('backup')
+        self.assertTrue(backup['ok'])
+        self.assertTrue(self.request('import', data=backup['data'])['ok'])
+        self.assertTrue(self.request('attachment_remove', attachmentId=copied['id'])['ok'])
+        self.assertEqual(self.window.store.active['attachments'], [])
+        self.assertEqual(self.window.store.read_attachment(note, item['id'])[1], raw)
+
+    def test_attachment_failed_save_rolls_back_and_stays_private(self):
+        real_save = self.window._save_notebook_legacy
+        count = 0
+        def fail_second():
+            nonlocal count
+            count += 1
+            return False if count == 2 else real_save()
+        with patch.object(self.window, '_save_notebook_legacy', side_effect=fail_second):
+            self.assertFalse(self.request('attach', filename='資料.txt', data=base64.b64encode(b'private data').decode())['ok'])
+        self.assertEqual(self.window.store.active.get('attachments', []), [])
+        self.assertFalse(any('data' in event for event in self.events))
 
 if __name__ == '__main__':
     unittest.main()

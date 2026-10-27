@@ -5,6 +5,7 @@ validated notes to their store. Importing never replaces an existing note.
 """
 
 from dataclasses import asdict
+import base64
 from datetime import datetime, timezone
 import json
 from itertools import chain
@@ -155,6 +156,23 @@ def _notes(data):
         if not isinstance(raw, dict):
             raise ValueError('ノートの形式が正しくありません。')
         note = {'id': _identifier(raw.get('id')), 'title': _title(raw.get('title'))}
+        from beamerplus.NotebookStorage import label, sha, MAX_ATTACHMENT
+        if 'course' in raw:
+            note['course'] = label(raw['course'])
+        if 'attachments' in raw:
+            if not isinstance(raw['attachments'], list):
+                raise ValueError('添付資料の一覧が正しくありません。')
+            note['attachments'] = []
+            for item in raw['attachments']:
+                if not isinstance(item, dict) or not isinstance(item.get('data'), str):
+                    raise ValueError('添付資料の本文がありません。')
+                if len(item['data']) > MAX_ATTACHMENT * 4 // 3 + 4:
+                    raise ValueError('添付資料が大きすぎます。')
+                contents = base64.b64decode(item['data'], validate=True)
+                if not contents or len(contents) > MAX_ATTACHMENT or sha(contents) != item.get('sha256'):
+                    raise ValueError('添付資料の内容が一致しません。')
+                note['attachments'].append(dict(id=_identifier(item.get('id')), name=label(item.get('name')),
+                                                data=item['data'], sha256=sha(contents), bytes=len(contents)))
         if 'pages' in raw:
             pages = raw['pages']
             if not isinstance(pages, list) or not pages or len(pages) > MAX_PAGES:
@@ -284,6 +302,8 @@ def parse_notebook_backup(data, *, existing_notes=()):
     for note in sanitized:
         original_id = note['id']
         note['id'] = _fresh_id(used)
+        for item in note.get('attachments', []):
+            item['id'] = _fresh_id(used)
         if active_id is None and original_id == source_active:
             active_id = note['id']
         if 'pages' in note:

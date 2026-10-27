@@ -51,7 +51,8 @@ class NotebookBridge(QObject):
                     self.connection.settimeout(5)
                     data = json.loads(self.rfile.read(length))
                     if (not isinstance(data, dict) or data.get('operation') not in
-                            ('read_current_note', 'get_note_status', 'add_note_text', 'remove_note_text')
+                            ('read_current_note', 'get_note_status', 'add_note_text', 'remove_note_text',
+                             'save_note_snapshot', 'save_submission_source')
                             or not isinstance(data.get('arguments', {}), dict)):
                         raise ValueError()
                 except (ValueError, OSError):

@@ -57,7 +57,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookPagesMixin, NotebookLibraryMixi
         self._mcp_instance = uuid.uuid4().hex
         self.mcp_bridge = None
         default_path = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)) / 'notebooks.json'
-        path = Path(store_path or os.environ.get('BEAMERPLUS_NOTEBOOK_PATH', default_path))
+        path = Path(store_path or os.environ.get('BEAMERPLUS_NOTEBOOK_PATH', default_path.parent / 'library'))
         self.store = NotebookStore(path)
         if import_state:
             self.store.import_ink(import_state.get('sketchbookStrokes', []) or import_state.get('strokes', []))
@@ -204,6 +204,18 @@ class NotebookWindow(NotebookFilesMixin, NotebookPagesMixin, NotebookLibraryMixi
                           for item in self.controller.sketchbook_texts]}
 
     def _handle_mcp_call(self, operation, arguments):
+        if operation in ('save_note_snapshot', 'save_submission_source'):
+            from beamerplus.NotebookStorage import note_digest
+            note = next((n for n in self.store.notes if n['id'] == arguments.get('note_id')
+                         and not n.get('deletedAt')), None)
+            if note is None:
+                raise ValueError('提出元ノートが見つかりません。')
+            if self.controller.current_stroke is not None or self._web_erase_active or self.controller.pending_edit is not None:
+                raise ValueError('筆記・消去中です。ペンを離してください。')
+            if not self.save_notebook():
+                raise ValueError('ノートを保存できませんでした。')
+            return {'store_path': str(self.store.path.resolve()), 'note_id': note['id'],
+                    'content_hash': note_digest(note), 'saved': True}
         metadata = self._mcp_metadata()
         if operation == 'get_note_status':
             return metadata

@@ -115,8 +115,8 @@ test('rename errors keep the dialog editable and show the backend reason',()=>{
 
 test('the card menu offers rename, duplicate and reversible trash actions',()=>{
   const h=harness();h.click('open-library');h.run("$('notebook-list').children[0].children[1].dispatch('click')");
-  assert.deepEqual(h.read('notebookLibraryMenu.children.map(button=>button.textContent)'),['名前を変更','複製','ゴミ箱へ移動']);
-  h.run("notebookLibraryMenu.children[1].dispatch('click')");assert.equal(h.read('sent.at(-1).action'),'duplicate');h.result();
+  assert.deepEqual(h.read('notebookLibraryMenu.children.map(button=>button.textContent)'),['名前を変更','科目を変更','複製','ゴミ箱へ移動']);
+  h.run("notebookLibraryMenu.children[2].dispatch('click')");assert.equal(h.read('sent.at(-1).action'),'duplicate');h.result();
   h.run("requestNotebookLibraryAction('trash','a')");assert.equal(h.read('sent.at(-1).action'),'trash');assert.equal(h.read('notes[0].deletedAt'),null);
 });
 
@@ -152,4 +152,14 @@ test('new-notebook navigation cannot mistake another page of an existing noteboo
   h.message({type:'state_sync',documentId:'pageB2',notebookId:'bookB'});assert.notEqual(h.read('notebookLibraryPending'),null);assert.equal(h.read("$('library-overlay').hidden"),false);
   h.message({type:'state_sync',documentId:'pageD2',notebookId:'bookD',notes:[{id:'bookA',title:'Algebra'},{id:'bookB',title:'Biology'},{id:'bookD',title:'New notebook'}]});
   assert.equal(h.read('notebookLibraryPending'),null);assert.equal(h.read("$('library-overlay').hidden"),true);assert.equal(h.read('notebookLibraryCurrentId()'),'bookD');
+});
+
+
+test('course filtering, moving and creating retain the selected course',()=>{
+  const h=harness();h.run("notes[0].course='力学';notes[1].course='代数';renderNotebookLibrary()");
+  h.run("$('library-course').value='力学';$('library-course').dispatch('change')");
+  assert.equal(h.read("$('notebook-list').children.length"),1);
+  h.run("openNotebookRename('a','course');$('library-rename-title').value='流体力学';$('library-rename-form').dispatch('submit')");
+  assert.equal(h.read('sent.at(-1).action'),'course');assert.equal(h.read('sent.at(-1).course'),'流体力学');
+  h.result();h.run("beginNotebookLibraryNavigation('new')");assert.equal(h.read('sent.at(-1).course'),'力学');
 });
