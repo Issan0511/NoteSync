@@ -12,7 +12,7 @@ import tempfile
 import uuid
 
 from beamerplus.DrawingModel import PresentationController, Stroke
-from beamerplus.NotebookText import NoteText, prepare_text
+from beamerplus.NotebookText import NoteText, prepare_text, transform_note_text
 
 
 class InkEditConflict(ValueError):
@@ -380,7 +380,7 @@ class NotebookController(PresentationController):
         self.finish_edit()
         self.texts_updated.emit(-1)
 
-    def apply_ink_edit(self, data):
+    def apply_ink_edit(self, data, aspect=4 / 3):
         """Validate a selection edit completely, then commit it as one undo step.
 
         Matrix ordering follows Canvas 2D: x' = ax + cy + e, y' = bx + dy + f.
@@ -396,11 +396,20 @@ class NotebookController(PresentationController):
         if not isinstance(raw_indices, list) or len(raw_indices) > 10000 or any(type(index) is not int or not 0 <= index < len(self.sketchbook_strokes) for index in raw_indices):
             raise ValueError('選択した線が見つかりません。もう一度選択してください。')
         indices = sorted(set(raw_indices))
-        if action != 'paste' and not indices:
-            raise ValueError('編集する線を囲んで選択してください。')
+        raw_text_ids = data.get('textIds', [])
+        available_texts = {item.id for item in self.sketchbook_texts}
+        if (not isinstance(raw_text_ids, list) or len(raw_text_ids) > 200
+                or any(not isinstance(identifier, str) or identifier not in available_texts for identifier in raw_text_ids)):
+            raise ValueError('選択した文字が見つかりません。もう一度選択してください。')
+        text_ids = set(raw_text_ids)
+        if action != 'paste' and not indices and not text_ids:
+            raise ValueError('編集する筆跡や文字を囲んで選択してください。')
 
         edited = self.snapshot()
         selected = [edited[index] for index in indices]
+        edited_texts = deepcopy(self.sketchbook_texts)
+        selected_texts = [item for item in edited_texts if item.id in text_ids]
+        result_text_ids = [item.id for item in selected_texts]
         if action in ('transform', 'duplicate', 'paste'):
             default_matrix = [1, 0, 0, 1, .02, .02] if action == 'duplicate' else None
             matrix = _edit_matrix(data, default_matrix)
@@ -408,21 +417,38 @@ class NotebookController(PresentationController):
         if action == 'transform':
             for index in indices:
                 edited[index] = _transform_stroke(edited[index], matrix, width_scale)
+            edited_texts = [transform_note_text(item, matrix, aspect) if item.id in text_ids else item
+                            for item in edited_texts]
         elif action == 'delete':
             selected_indices = set(indices)
             edited = [stroke for index, stroke in enumerate(edited) if index not in selected_indices]
             indices = []
+            edited_texts = [item for item in edited_texts if item.id not in text_ids]
+            result_text_ids = []
         elif action in ('duplicate', 'paste'):
             if action == 'paste':
                 raw_strokes = data.get('strokes')
-                if not isinstance(raw_strokes, list) or not 1 <= len(raw_strokes) <= 1000:
+                raw_texts = data.get('texts', [])
+                if not isinstance(raw_texts, list) or len(raw_texts) > 200:
+                    raise ValueError('貼り付ける文字の数が正しくありません。')
+                if any(not isinstance(item, dict) for item in raw_texts):
+                    raise ValueError('貼り付ける文字のデータが正しくありません。')
+                if not isinstance(raw_strokes, list) or len(raw_strokes) > 1000 or not (raw_strokes or raw_texts):
                     raise ValueError('貼り付ける線の数が正しくありません。')
                 if sum(len(stroke.get('points', [])) if isinstance(stroke, dict) and isinstance(stroke.get('points'), list) else 100001 for stroke in raw_strokes) > 100000:
                     raise ValueError('一度に貼り付ける線が多すぎます。')
                 selected = [_clipboard_stroke(stroke) for stroke in raw_strokes]
+                selected_texts = [prepare_text(dict(item, id=uuid.uuid4().hex), aspect) for item in raw_texts]
             additions = [_transform_stroke(stroke, matrix, width_scale) for stroke in selected]
             indices = list(range(len(edited), len(edited) + len(additions)))
             edited.extend(additions)
+            if len(edited_texts) + len(selected_texts) > 200:
+                raise ValueError('このページの文字が多すぎます。不要な書き込みを消してください。')
+            text_additions = [transform_note_text(item, matrix, aspect) for item in selected_texts]
+            for item in text_additions:
+                item.id = uuid.uuid4().hex
+            edited_texts.extend(text_additions)
+            result_text_ids = [item.id for item in text_additions]
         elif action == 'style':
             style = {}
             if 'color' in data:
@@ -439,12 +465,22 @@ class NotebookController(PresentationController):
             for stroke in selected:
                 for key, value in style.items():
                     setattr(stroke, key, value)
+            if 'color' in style:
+                for item in selected_texts:
+                    item.color = style['color']
 
         # Invalid requests never finish a pen gesture or disturb its undo state.
         self.end_stroke()
-        if edited != self.sketchbook_strokes:
+        ink_changed = edited != self.sketchbook_strokes
+        text_changed = edited_texts != self.sketchbook_texts
+        if ink_changed or text_changed:
             self.begin_edit()
             self.sketchbook_strokes = edited
+            self.sketchbook_texts = edited_texts
             self.finish_edit()
-            self.strokes_updated.emit(-1)
+            if text_changed:
+                self.texts_updated.emit(-1)
+            if ink_changed:
+                self.strokes_updated.emit(-1)
+        self._last_edited_text_ids = result_text_ids
         return indices

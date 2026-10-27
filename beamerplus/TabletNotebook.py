@@ -136,7 +136,7 @@ SCRIPT = r"""
       }else{ctx.beginPath();ctx.moveTo(points[0][0]*w,points[0][1]*h);for(let i=1;i<points.length-1;i++){const a=points[i],b=points[i+1];ctx.quadraticCurveTo(a[0]*w,a[1]*h,(a[0]+b[0])*w/2,(a[1]+b[1])*h/2);}const end=points.at(-1);ctx.lineTo(end[0]*w,end[1]*h);ctx.stroke();}ctx.restore();
     }
     __NOTE_TEXT_SCRIPT__
-    function renderAllStrokes(strokes){committedCtx.clearRect(0,0,committedCanvas.width,committedCanvas.height);for(const stroke of strokes)drawStroke(committedCtx,stroke);drawNoteTexts(committedCtx,noteTexts,slideWrapper.clientWidth,slideWrapper.clientHeight);}
+    function renderAllStrokes(strokes,texts=noteTexts){committedCtx.clearRect(0,0,committedCanvas.width,committedCanvas.height);for(const stroke of strokes)drawStroke(committedCtx,stroke);drawNoteTexts(committedCtx,texts,slideWrapper.clientWidth,slideWrapper.clientHeight);}
     function adjustLayout(){
       finishActiveInput();const r=stage.getBoundingClientRect(),width=Math.max(40,Math.min(r.width-44,(r.height-48)*paperAspect)),height=width/paperAspect;
       slideWrapper.style.setProperty('--paper-gap',`${height/24}px`);slideWrapper.style.width=`${width}px`;slideWrapper.style.height=`${height}px`;const dpr=window.devicePixelRatio||1;

@@ -39,9 +39,28 @@ class InkSelectionGeometry {
       }
     });return selected;
   }
-  static bounds(strokes){
+  static textBounds(item){
+    const box=item.baseBounds||item.bounds;if(!box)return null;
+    if(!item.baseBounds||!item.transform)return {...box};
+    const [a,b,c,d,e,f]=item.transform,corners=[];
+    for(const x of [box.x,box.x+box.width])for(const y of [box.y,box.y+box.height])corners.push([a*x+c*y+e,b*x+d*y+f]);
+    const left=Math.min(...corners.map(p=>p[0])),top=Math.min(...corners.map(p=>p[1]));return {x:left,y:top,width:Math.max(...corners.map(p=>p[0]))-left,height:Math.max(...corners.map(p=>p[1]))-top};
+  }
+  static selectedTexts(texts,polygon){
+    if(polygon.length<3)return [];return texts.filter(item=>{
+      const b=this.textBounds(item);if(!b)return false;const corners=[[b.x,b.y],[b.x+b.width,b.y],[b.x+b.width,b.y+b.height],[b.x,b.y+b.height]];
+      return corners.some(p=>this.inside(p,polygon))||polygon.some(p=>p[0]>=b.x&&p[0]<=b.x+b.width&&p[1]>=b.y&&p[1]<=b.y+b.height)||corners.some((p,i)=>polygon.some((q,j)=>this.intersects(p,corners[(i+1)%4],q,polygon[(j+1)%polygon.length])));
+    }).map(item=>item.id);
+  }
+  static transformText(item,matrix){
+    const [a,b,c,d,e,f]=matrix,[p,q,r,s,t,u]=item.transform||[1,0,0,1,0,0];
+    const transformed={...item,transform:[a*p+c*q,b*p+d*q,a*r+c*s,b*r+d*s,a*t+c*u+e,b*t+d*u+f]};
+    transformed.bounds=this.textBounds(transformed);return transformed;
+  }
+  static bounds(strokes,texts=[]){
     let left=Infinity,top=Infinity,right=-Infinity,bottom=-Infinity;
     for(const s of strokes)for(const p of s.points){left=Math.min(left,p[0]);top=Math.min(top,p[1]);right=Math.max(right,p[0]);bottom=Math.max(bottom,p[1]);}
+    for(const item of texts){const b=this.textBounds(item);if(b){left=Math.min(left,b.x);top=Math.min(top,b.y);right=Math.max(right,b.x+b.width);bottom=Math.max(bottom,b.y+b.height);}}
     if(!Number.isFinite(left))return null;
     return {x:left,y:top,width:Math.max(.006,right-left),height:Math.max(.006,bottom-top)};
   }
@@ -60,37 +79,41 @@ class InkSelectionGeometry {
 """
 
 SELECTION_SCRIPT = SELECTION_GEOMETRY_SCRIPT + r"""
-let inkRevision=0,selectedInk=[],selectionClipboard=[],selectionRequest=null,selectionDrag=null,lassoPath=[],lassoPointer=null,lassoArmed=false,selectionSequence=0;
-let selectionPending=null,selectionFrame=null,selectionBackgroundSplit=false;
+let inkRevision=0,selectedInk=[],selectedTextIds=[],selectionClipboard=[],selectionTextClipboard=[],selectionRequest=null,selectionDrag=null,lassoPath=[],lassoPointer=null,lassoArmed=false,selectionSequence=0;
+let selectionPending=null,selectionFrame=null,selectionBackgroundSplit=false,lastInkSnapshotRevision=-1,lastTextSnapshotRevision=-1;
 const selectionSession=Date.now().toString(36)+'_'+Math.random().toString(36).slice(2);
 const selectionLayer=document.createElement('div');selectionLayer.id='selection-layer';slideWrapper.appendChild(selectionLayer);
 const selectionCanvas=document.createElement('canvas');selectionCanvas.id='selection-canvas';selectionLayer.appendChild(selectionCanvas);
-const selectionBox=document.createElement('div');selectionBox.id='selection-box';selectionBox.hidden=true;selectionBox.setAttribute('aria-label','選択した筆跡。ドラッグで移動');
+const selectionBox=document.createElement('div');selectionBox.id='selection-box';selectionBox.hidden=true;selectionBox.setAttribute('aria-label','選択した筆跡・文字。ドラッグで移動');
 for(const corner of ['nw','ne','sw','se','rotate']){const handle=document.createElement('div');handle.className='selection-handle';handle.dataset.selectionHandle=corner;handle.setAttribute('aria-label',corner==='rotate'?'選択を回転':'選択の大きさを変更');if(corner==='rotate')handle.textContent='↻';selectionBox.appendChild(handle);}selectionLayer.appendChild(selectionBox);
-const selectionActions=document.createElement('div');selectionActions.id='selection-actions';selectionActions.hidden=true;selectionActions.setAttribute('role','toolbar');selectionActions.setAttribute('aria-label','選択した筆跡の操作');
+const selectionActions=document.createElement('div');selectionActions.id='selection-actions';selectionActions.hidden=true;selectionActions.setAttribute('role','toolbar');selectionActions.setAttribute('aria-label','選択した筆跡・文字の操作');
 selectionActions.innerHTML='<button type="button" data-ink-action="cut">切り取り</button><button type="button" data-ink-action="copy">コピー</button><button type="button" data-ink-action="paste">貼り付け</button><button type="button" data-ink-action="duplicate">複製</button><button type="button" data-ink-action="delete">削除</button><button type="button" data-ink-action="style">スタイル</button><button type="button" data-ink-action="done">完了</button>';document.body.appendChild(selectionActions);
-const selectionStyle=document.createElement('section');selectionStyle.id='selection-style';selectionStyle.hidden=true;selectionStyle.setAttribute('role','dialog');selectionStyle.setAttribute('aria-label','選択した筆跡のスタイル');
-selectionStyle.innerHTML='<strong>筆跡のスタイル</strong><label>色<input type="color" id="selection-color" aria-label="選択の色"></label><label>太さ<input type="range" id="selection-width" aria-label="選択の太さ" min="1" max="80"></label><label>濃さ<input type="range" id="selection-opacity" aria-label="選択の濃さ" min="10" max="100"></label><div class="style-actions"><button type="button" id="selection-style-cancel">キャンセル</button><button type="button" id="selection-style-apply">変更する</button></div>';document.body.appendChild(selectionStyle);
+const selectionStyle=document.createElement('section');selectionStyle.id='selection-style';selectionStyle.hidden=true;selectionStyle.setAttribute('role','dialog');selectionStyle.setAttribute('aria-label','選択のスタイル');
+selectionStyle.innerHTML='<strong>選択のスタイル</strong><label>色<input type="color" id="selection-color" aria-label="選択の色"></label><label>太さ<input type="range" id="selection-width" aria-label="選択の太さ" min="1" max="80"></label><label>濃さ<input type="range" id="selection-opacity" aria-label="選択の濃さ" min="10" max="100"></label><div class="style-actions"><button type="button" id="selection-style-cancel">キャンセル</button><button type="button" id="selection-style-apply">変更する</button></div>';document.body.appendChild(selectionStyle);
 const lassoButton=document.createElement('button');lassoButton.type='button';lassoButton.className='icon-button';lassoButton.id='btn-lasso';lassoButton.setAttribute('aria-label','囲って選択');lassoButton.title='囲って選択';lassoButton.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 2"><path d="M8 20c-7-1-7-15 1-17 9-3 17 11 10 16-4 3-8 2-10-1s1-5 3-3c2 2-1 8-5 8"/></svg>';
 $('btn-line').before(lassoButton);
-lassoButton.addEventListener('click',()=>{finishActiveInput();currentTool='lasso';isLineMode=false;clearInkSelection();updatePenUI();showToast('選びたい筆跡を囲んでください');});
+lassoButton.addEventListener('click',()=>{finishActiveInput();currentTool='lasso';isLineMode=false;clearInkSelection();updatePenUI();showToast('選びたい筆跡や文字・数式を囲んでください');});
 function selectionPointerActive(){return lassoPointer!==null||selectionDrag!==null;}
 function resetSelectionPreview(){
   if(selectionFrame!==null){cancelAnimationFrame(selectionFrame);selectionFrame=null;}
   selectionLayer.style.transform='';
 }
 function restoreSelectionBackground(){
-  if(selectionBackgroundSplit){renderBaseInk(sketchbookStrokes);selectionBackgroundSplit=false;}
+  if(selectionBackgroundSplit){renderBaseInk(sketchbookStrokes,noteTexts);selectionBackgroundSplit=false;}
 }
 function clearInkSelection(){
   const lassoId=lassoPointer,dragId=selectionDrag?.pointer;lassoPointer=null;lassoArmed=false;
-  selectedInk=[];lassoPath=[];selectionDrag=null;selectionBox.hidden=true;selectionActions.hidden=true;selectionStyle.hidden=true;
+  selectedInk=[];selectedTextIds=[];lassoPath=[];selectionDrag=null;selectionBox.hidden=true;selectionActions.hidden=true;selectionStyle.hidden=true;
   if(lassoId!==null&&activeCanvas.hasPointerCapture(lassoId))activeCanvas.releasePointerCapture(lassoId);
   if(dragId!==undefined&&selectionBox.hasPointerCapture(dragId))selectionBox.releasePointerCapture(dragId);
   resetSelectionPreview();restoreSelectionBackground();
   const ctx=selectionCanvas.getContext('2d');ctx.clearRect(0,0,selectionCanvas.width,selectionCanvas.height);
 }
 function selectedStrokes(){return selectedInk.map(i=>sketchbookStrokes[i]).filter(Boolean);}
+function selectedTexts(){return noteTexts.filter(item=>selectedTextIds.includes(item.id));}
+function selectionBackgroundTexts(){const ids=new Set(selectedTextIds);return noteTexts.filter(item=>!ids.has(item.id));}
+function selectionBounds(){return InkSelectionGeometry.bounds(selectedStrokes(),selectedTexts());}
+function annotationClipboardSource(item){return Object.fromEntries(['id','text','norm_x','norm_y','size','color','format','transform'].filter(key=>item[key]!==undefined).map(key=>[key,item[key]]));}
 function resizeSelectionCanvas(){
   const w=slideWrapper.clientWidth,h=slideWrapper.clientHeight,density=Math.min((window.devicePixelRatio||1)*(typeof notebookView!=='undefined'?notebookView.scale:1),4,4096/Math.max(1,w,h));
   const width=Math.round(w*density),height=Math.round(h*density);
@@ -103,13 +126,15 @@ function renderInkSelection(preview=null){
   ctx.clearRect(0,0,w,h);
   if(lassoPath.length){ctx.strokeStyle='#6f788d';ctx.lineWidth=1/(typeof notebookView!=='undefined'?notebookView.scale:1);ctx.setLineDash([3,4]);ctx.beginPath();lassoPath.forEach((p,i)=>i?ctx.lineTo(p[0]*w,p[1]*h):ctx.moveTo(p[0]*w,p[1]*h));ctx.stroke();ctx.setLineDash([]);return;}
   const strokes=preview||selectedStrokes();
-  if(selectedInk.length&&!selectionBackgroundSplit){
-    const indices=new Set(selectedInk);renderBaseInk(sketchbookStrokes.filter((_,i)=>!indices.has(i)));selectionBackgroundSplit=true;
+  if((selectedInk.length||selectedTextIds.length)&&!selectionBackgroundSplit){
+    const indices=new Set(selectedInk);renderBaseInk(sketchbookStrokes.filter((_,i)=>!indices.has(i)),selectionBackgroundTexts());selectionBackgroundSplit=true;
   }
   for(const stroke of strokes){drawStroke(ctx,{...stroke,color:'#80b8ee',opacity:.6,width_ratio:stroke.width_ratio+.004});drawStroke(ctx,stroke);}
-  const bounds=InkSelectionGeometry.bounds(strokes);selectionBox.hidden=!bounds;
+  const texts=selectedTexts();for(const item of texts){const b=InkSelectionGeometry.textBounds(item);if(b){ctx.save();ctx.fillStyle='#80b8ee';ctx.globalAlpha=.13;ctx.fillRect(b.x*w,b.y*h,b.width*w,b.height*h);ctx.restore();}}
+  drawNoteTexts(ctx,texts,w,h);
+  const bounds=InkSelectionGeometry.bounds(strokes,texts);selectionBox.hidden=!bounds;
   if(bounds){selectionBox.style.left=`${bounds.x*100}%`;selectionBox.style.top=`${bounds.y*100}%`;selectionBox.style.width=`${bounds.width*100}%`;selectionBox.style.height=`${bounds.height*100}%`;}
-  selectionActions.hidden=!bounds;for(const b of selectionActions.querySelectorAll('button'))b.disabled=!!selectionRequest||b.dataset.inkAction==='paste'&&!selectionClipboard.length;
+  selectionActions.hidden=!bounds;for(const b of selectionActions.querySelectorAll('button'))b.disabled=!!selectionRequest||b.dataset.inkAction==='paste'&&!selectionClipboard.length&&!selectionTextClipboard.length;
   positionSelectionToolbar();
 }
 function positionSelectionToolbar(){
@@ -121,13 +146,14 @@ function positionSelectionToolbar(){
 function requestInkEdit(action,extra={},optimistic=false){
   if(selectionRequest||!notebookReady)return false;finishActiveInput();
   const requestId=selectionSession+'_'+(++selectionSequence);selectionRequest=requestId;
-  const original=sketchbookStrokes;
+  const original=sketchbookStrokes,originalTexts=noteTexts;
   selectionPending={requestId,documentId:currentDocumentId,baseRevision:inkRevision,latestSnapshot:null,localMutation:false,optimistic};
   if(optimistic){
     const indices=new Set(selectedInk);sketchbookStrokes=sketchbookStrokes.map((s,i)=>indices.has(i)?InkSelectionGeometry.transform(s,extra.matrix,extra.widthScale??1):s);
+    const textIds=new Set(selectedTextIds);noteTexts=noteTexts.map(item=>textIds.has(item.id)?InkSelectionGeometry.transformText(item,extra.matrix):item);
   }
-  const sent=sendWS({type:'note_ink_edit',documentId:currentDocumentId,baseRevision:inkRevision,requestId,indices:selectedInk.slice(),action,...extra});
-  if(!sent){selectionRequest=null;selectionPending=null;sketchbookStrokes=original;renderAllStrokes(sketchbookStrokes);return false;}
+  const sent=sendWS({type:'note_ink_edit',documentId:currentDocumentId,baseRevision:inkRevision,requestId,indices:selectedInk.slice(),textIds:selectedTextIds.slice(),action,...extra});
+  if(!sent){selectionRequest=null;selectionPending=null;sketchbookStrokes=original;noteTexts=originalTexts;renderAllStrokes(sketchbookStrokes);return false;}
   $('save-status').textContent='保存中…';
   if(optimistic){for(const b of selectionActions.querySelectorAll('button'))b.disabled=true;selectionActions.hidden=false;positionSelectionToolbar();}
   else renderInkSelection();return true;
@@ -136,7 +162,7 @@ function swallowSelectionEvent(e){e.preventDefault();e.stopImmediatePropagation(
 function lassoNorm(e){const p=getPointerNormPos(e);return [p.normX,p.normY];}
 function finishLasso(e,cancelled=false){
   if(e.pointerId!==lassoPointer)return;
-  if(!cancelled&&lassoPath.length>=3){selectedInk=InkSelectionGeometry.selected(sketchbookStrokes,lassoPath);if(!selectedInk.length)showToast('筆跡が選ばれませんでした。文字を囲んでください');}
+  if(!cancelled&&lassoPath.length>=3){selectedInk=InkSelectionGeometry.selected(sketchbookStrokes,lassoPath);selectedTextIds=InkSelectionGeometry.selectedTexts(noteTexts,lassoPath);if(!selectedInk.length&&!selectedTextIds.length)showToast('選ばれませんでした。筆跡や文字・数式を囲んでください');}
   lassoPath=[];lassoPointer=null;lassoArmed=false;if(activeCanvas.hasPointerCapture(e.pointerId))activeCanvas.releasePointerCapture(e.pointerId);renderInkSelection();swallowSelectionEvent(e);
 }
 activeCanvas.addEventListener('pointerdown',e=>{
@@ -161,7 +187,7 @@ selectionBox.addEventListener('pointerdown',e=>{
     clearInkSelection();onInkStart(e);swallowSelectionEvent(e);return;
   }
   if(e.pointerType==='pen'&&(!penHasContact(e)||isPenEraser(e))){swallowSelectionEvent(e);return;}
-  finishActiveInput();const bounds=InkSelectionGeometry.bounds(selectedStrokes());if(!bounds)return;
+  finishActiveInput();const bounds=selectionBounds();if(!bounds)return;
   renderInkSelection();
   selectionDrag={pointer:e.pointerId,start:lassoNorm(e),bounds,paperRect:slideWrapper.getBoundingClientRect(),width:slideWrapper.clientWidth,height:slideWrapper.clientHeight,handle:e.target.dataset.selectionHandle||'move',matrix:[1,0,0,1,0,0],widthScale:1};
   selectionBox.setPointerCapture(e.pointerId);selectionActions.hidden=true;selectionStyle.hidden=true;swallowSelectionEvent(e);
@@ -207,18 +233,18 @@ selectionBox.addEventListener('lostpointercapture',e=>{if(selectionDrag?.pointer
 selectionActions.addEventListener('click',e=>{
   const action=e.target.dataset.inkAction;if(!action||selectionRequest)return;
   if(action==='done'){clearInkSelection();return;}
-  if(action==='copy'||action==='cut'){selectionClipboard=structuredClone(selectedStrokes());showToast(action==='copy'?'筆跡をコピーしました':'筆跡を切り取りました');if(action==='cut')requestInkEdit('delete');else renderInkSelection();}
-  else if(action==='paste')requestInkEdit('paste',{strokes:selectionClipboard,matrix:[1,0,0,1,.02,.02]});
+  if(action==='copy'||action==='cut'){selectionClipboard=structuredClone(selectedStrokes());selectionTextClipboard=selectedTexts().map(annotationClipboardSource);showToast(action==='copy'?'選択した内容をコピーしました':'選択した内容を切り取りました');if(action==='cut')requestInkEdit('delete');else renderInkSelection();}
+  else if(action==='paste')requestInkEdit('paste',{strokes:selectionClipboard,texts:selectionTextClipboard,matrix:[1,0,0,1,.02,.02]});
   else if(action==='style'){
-    const stroke=selectedStrokes()[0];if(!stroke)return;$('selection-color').value=stroke.color;$('selection-width').value=Math.round(stroke.width_ratio*1000);$('selection-opacity').value=Math.round(stroke.opacity*100);selectionStyle.hidden=false;
+    const stroke=selectedStrokes()[0],item=stroke||selectedTexts()[0];if(!item)return;$('selection-color').value=item.color;$('selection-width').value=Math.round((stroke?.width_ratio||.004)*1000);$('selection-opacity').value=Math.round((stroke?.opacity??1)*100);$('selection-width').disabled=!stroke;$('selection-opacity').disabled=!stroke;selectionStyle.hidden=false;
   }else requestInkEdit(action);
 });
 $('selection-style-cancel').addEventListener('click',()=>selectionStyle.hidden=true);
 $('selection-style-apply').addEventListener('click',()=>{requestInkEdit('style',{color:$('selection-color').value,widthRatio:Number($('selection-width').value)*.001,opacity:Number($('selection-opacity').value)/100});selectionStyle.hidden=true;});
 const pasteButton=document.createElement('button');pasteButton.type='button';pasteButton.className='wide-button';pasteButton.textContent='コピーした筆跡を貼り付け';pasteButton.id='paste-ink';$('note-options').appendChild(pasteButton);
-pasteButton.addEventListener('click',()=>{if(!selectionClipboard.length){showToast('先に筆跡を囲んでコピーしてください');return;}currentTool='lasso';updatePenUI();closeOverlays();requestInkEdit('paste',{strokes:selectionClipboard,matrix:[1,0,0,1,.02,.02]});});
+pasteButton.textContent='コピーした筆跡・文字を貼り付け';pasteButton.addEventListener('click',()=>{if(!selectionClipboard.length&&!selectionTextClipboard.length){showToast('先に筆跡や文字を囲んでコピーしてください');return;}currentTool='lasso';updatePenUI();closeOverlays();requestInkEdit('paste',{strokes:selectionClipboard,texts:selectionTextClipboard,matrix:[1,0,0,1,.02,.02]});});
 document.addEventListener('keydown',e=>{
-  if(['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)||!selectedInk.length||selectionRequest)return;
+  if(['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)||(!selectedInk.length&&!selectedTextIds.length)||selectionRequest)return;
   if(e.key==='Escape'){clearInkSelection();return;}
   if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();requestInkEdit('delete');}
   if((e.ctrlKey||e.metaKey)&&['c','x','v'].includes(e.key.toLowerCase())){e.preventDefault();selectionActions.querySelector(`[data-ink-action="${{c:'copy',x:'cut',v:'paste'}[e.key.toLowerCase()]}"]`).click();}
@@ -226,11 +252,11 @@ document.addEventListener('keydown',e=>{
 const renderBaseInk=renderAllStrokes;
 renderAllStrokes=function(strokes){
   if(selectionDrag)cancelSelectionDrag();
-  const indices=new Set(selectedInk);selectionBackgroundSplit=indices.size>0;
-  renderBaseInk(selectionBackgroundSplit?strokes.filter((_,i)=>!indices.has(i)):strokes);renderInkSelection();
+  const indices=new Set(selectedInk);selectionBackgroundSplit=indices.size>0||selectedTextIds.length>0;
+  renderBaseInk(selectionBackgroundSplit?strokes.filter((_,i)=>!indices.has(i)):strokes,selectionBackgroundTexts());renderInkSelection();
 };
 const updatePenBeforeSelection=updatePenUI;
-updatePenUI=function(){updatePenBeforeSelection();lassoButton.classList.toggle('active',currentTool==='lasso');if(currentTool!=='lasso'&&(selectedInk.length||lassoPointer!==null||selectionDrag))clearInkSelection();};
+updatePenUI=function(){updatePenBeforeSelection();lassoButton.classList.toggle('active',currentTool==='lasso');if(currentTool!=='lasso'&&(selectedInk.length||selectedTextIds.length||lassoPointer!==null||selectionDrag))clearInkSelection();};
 const layoutBeforeSelection=adjustLayout;adjustLayout=function(){if(selectionDrag)cancelSelectionDrag();layoutBeforeSelection();renderInkSelection();};
 const sendBeforeSelection=sendWS;
 sendWS=function(message){
@@ -246,11 +272,16 @@ handleServerMessage=function(msg){
     if(msg.requestId!==selectionRequest)return;
     const pending=selectionPending,snapshot=pending?.latestSnapshot;selectionRequest=null;selectionPending=null;
     if(msg.documentId!==currentDocumentId){clearInkSelection();return;}
-    inkRevision=Math.max(inkRevision,msg.inkRevision||0,snapshot?.inkRevision||0);
+    const textSnapshot=pending?.latestTexts;
+    inkRevision=Math.max(inkRevision,msg.inkRevision||0,snapshot?.inkRevision||0,textSnapshot?.inkRevision||0);
+    lastInkSnapshotRevision=inkRevision;lastTextSnapshotRevision=inkRevision;
+    if(textSnapshot&&(!msg.ok||textSnapshot.inkRevision>msg.inkRevision))noteTexts=textSnapshot.texts||[];
+    else if(Array.isArray(msg.texts))noteTexts=msg.texts;
+    else if(Array.isArray(snapshot?.noteTexts))noteTexts=snapshot.noteTexts;
     if(pending?.localMutation){clearInkSelection();updatePenUI();return;}
     if(msg.ok&&(!snapshot||snapshot.inkRevision===msg.inkRevision)){
       if(snapshot)sketchbookStrokes=snapshot.sketchbookStrokes||snapshot.strokes||[];
-      if(currentTool==='lasso')selectedInk=msg.indices||[];else clearInkSelection();
+      if(currentTool==='lasso'){selectedInk=msg.indices||[];selectedTextIds=msg.textIds||[];}else clearInkSelection();
       if(pending?.optimistic){updatePenUI();renderInkSelection();}
       else{renderAllStrokes(sketchbookStrokes);updatePenUI();}
     }else{
@@ -258,20 +289,32 @@ handleServerMessage=function(msg){
     }return;
   }
   const changedDocument=msg.type==='state_sync'&&msg.documentId!==currentDocumentId;
-  if(msg.type==='strokes_updated'&&msg.documentId&&msg.documentId!==currentDocumentId)return;
+  if(['strokes_updated','note_texts_updated'].includes(msg.type)&&msg.documentId&&msg.documentId!==currentDocumentId)return;
+  if(selectionPending&&!changedDocument&&msg.type==='note_texts_updated'){
+    if(!selectionPending.latestTexts||msg.inkRevision>=selectionPending.latestTexts.inkRevision)selectionPending.latestTexts=msg;
+    return;
+  }
   if(selectionPending&&!changedDocument&&['state_sync','strokes_updated','stroke_undone'].includes(msg.type)){
     if(!selectionPending.latestSnapshot||msg.inkRevision>=selectionPending.latestSnapshot.inkRevision)selectionPending.latestSnapshot=msg;
     // Names and paper can still change while ink is awaiting acknowledgement.
     // Apply that metadata with the browser's current ink, never the old image.
-    if(msg.type==='state_sync')handleMessageBeforeSelection({...msg,sketchbookStrokes});
+    if(msg.type==='state_sync')handleMessageBeforeSelection({...msg,sketchbookStrokes,noteTexts});
     return;
   }
   if(selectionPending&&msg.type==='note_saved')return;
-  if(msg.type==='strokes_updated'&&Number.isInteger(msg.inkRevision)&&msg.inkRevision<=inkRevision)return;
+  if(['strokes_updated','note_texts_updated'].includes(msg.type)&&Number.isInteger(msg.inkRevision)){
+    const seen=msg.type==='note_texts_updated'?lastTextSnapshotRevision:lastInkSnapshotRevision;
+    if(msg.inkRevision<inkRevision||msg.inkRevision<=seen)return;
+  }
   if(Number.isInteger(msg.inkRevision)){
     if(msg.inkRevision!==inkRevision&&!selectionRequest)clearInkSelection();inkRevision=msg.inkRevision;
   }
   if(changedDocument){selectionRequest=null;selectionPending=null;clearInkSelection();notebookView.reset();}
+  if(Number.isInteger(msg.inkRevision)){
+    if(msg.type==='state_sync'){lastInkSnapshotRevision=msg.inkRevision;lastTextSnapshotRevision=msg.inkRevision;}
+    else if(msg.type==='note_texts_updated')lastTextSnapshotRevision=msg.inkRevision;
+    else if(['strokes_updated','stroke_undone','strokes_cleared'].includes(msg.type))lastInkSnapshotRevision=msg.inkRevision;
+  }
   if(msg.type==='strokes_cleared'){clearInkSelection();selectionRequest=null;selectionPending=null;}
   handleMessageBeforeSelection(msg);
   if(changedDocument)refreshNotebookView(true);

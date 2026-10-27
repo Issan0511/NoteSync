@@ -274,7 +274,7 @@ class NotebookWindow(NotebookFilesMixin, NotebookPagesMixin, NotebookLibraryMixi
         try:
             if data.get('documentId') != getattr(self, '_document_id', self.store.active_id):
                 raise ValueError('別のノートが開かれています。もう一度囲んで選択してください。')
-            indices = self.controller.apply_ink_edit(data)
+            indices = self.controller.apply_ink_edit(data, getattr(getattr(self, 'canvas', None), 'aspect', 4 / 3))
             self._finish_erase()
         except (ValueError, TypeError, OverflowError) as exc:
             self.web_server.broadcast({'type': 'note_error', 'message': str(exc)})
@@ -288,7 +288,10 @@ class NotebookWindow(NotebookFilesMixin, NotebookPagesMixin, NotebookLibraryMixi
         self._sync_web_strokes_updated(-1)
         self.web_server.broadcast({'type': 'note_ink_edit_result', 'ok': True,
                                    'documentId': getattr(self, '_document_id', self.store.active_id), 'inkRevision': self.controller.ink_revision,
-                                   'requestId': data.get('requestId'), 'indices': indices})
+                                   'requestId': data.get('requestId'), 'indices': indices,
+                                   'textIds': getattr(self.controller, '_last_edited_text_ids', []),
+                                   'texts': [annotation_payload(item, getattr(getattr(self, 'canvas', None), 'aspect', 4 / 3))
+                                             for item in self.controller.sketchbook_texts]})
         # No-op edits still need the final saved acknowledgement after the
         # tablet has shown a local pending state. Keep disk work off this slot.
         timer = getattr(self, 'save_timer', None)

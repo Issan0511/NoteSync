@@ -1,6 +1,6 @@
 """Plain text annotations shared by the notebook, image export, and MCP."""
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from functools import lru_cache
 import math
 import re
@@ -9,7 +9,7 @@ import uuid
 from xml.etree import ElementTree as ET
 
 from PySide6.QtCore import QByteArray, QPointF, QRectF
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QTransform
 from PySide6.QtSvg import QSvgRenderer
 
 from beamerplus.DrawingModel import TextItem
@@ -20,6 +20,7 @@ from beamerplus.NotebookMath import render_math_svg
 class NoteText(TextItem):
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     format: str = 'auto'
+    transform: list[float] | None = None
 
     def bounds(self, aspect):
         return text_bounds(self, aspect)
@@ -37,7 +38,7 @@ def character_width(char):
     return 1 if unicodedata.east_asian_width(char) in ('W', 'F') else .65
 
 
-def text_bounds(item, aspect):
+def text_base_bounds(item, aspect):
     layout = annotation_layout(item.text, item.size, item.color, item.norm_x, aspect, item.format)
     if layout:
         ratio = item.size * .0015
@@ -49,6 +50,42 @@ def text_bounds(item, aspect):
     return {'x': item.norm_x, 'y': item.norm_y,
             'width': max(sum(character_width(c) for c in line) for line in lines) * ratio * min(1, 1 / aspect),
             'height': len(lines) * ratio * 1.45 * min(1, aspect)}
+
+
+def text_bounds(item, aspect):
+    bounds = text_base_bounds(item, aspect)
+    matrix = getattr(item, 'transform', None)
+    if not matrix:
+        return bounds
+    a, b, c, d, e, f = matrix
+    corners = [(a*x+c*y+e, b*x+d*y+f)
+               for x in (bounds['x'], bounds['x']+bounds['width'])
+               for y in (bounds['y'], bounds['y']+bounds['height'])]
+    left, top = min(p[0] for p in corners), min(p[1] for p in corners)
+    return dict(x=left, y=top, width=max(p[0] for p in corners)-left,
+                height=max(p[1] for p in corners)-top)
+
+
+def validate_text_transform(value):
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or len(value) != 6:
+        raise ValueError('文字の移動・拡大データを確認してください。')
+    matrix = [_number(v, -64, 64) for v in value]
+    if abs(matrix[0]*matrix[3]-matrix[1]*matrix[2]) < 1e-8:
+        raise ValueError('文字が小さすぎます。もう少し大きくしてください。')
+    return None if matrix == [1, 0, 0, 1, 0, 0] else matrix
+
+
+def transform_note_text(item, matrix, aspect):
+    a, b, c, d, e, f = matrix
+    p, q, r, s, t, u = item.transform or [1, 0, 0, 1, 0, 0]
+    composed = [a*p+c*q, b*p+d*q, a*r+c*s, b*r+d*s, a*t+c*u+e, b*t+d*u+f]
+    result = replace(item, transform=validate_text_transform(composed))
+    bounds = text_bounds(result, aspect)
+    for coordinate in (bounds['x'], bounds['y'], bounds['x']+bounds['width'], bounds['y']+bounds['height']):
+        _number(coordinate, -4, 5)
+    return result
 
 
 @dataclass(frozen=True)
@@ -163,6 +200,7 @@ def annotation_layout(text, size, color, x, aspect, text_format='auto'):
 
 def annotation_payload(item, aspect):
     result = asdict(item)
+    result.update(bounds=text_bounds(item, aspect), baseBounds=text_base_bounds(item, aspect))
     layout = annotation_layout(item.text, item.size, item.color, item.norm_x, aspect, item.format)
     if layout:
         result.update(renderedSvg=layout.svg, renderedWidth=layout.width, renderedHeight=layout.height)
@@ -195,7 +233,7 @@ def prepare_text(data, aspect=4 / 3):
     if layout:
         if y + text_bounds(item, aspect)['height'] > .98:
             raise ValueError('数式がノートの下端を越えます。位置・大きさを変えてください。')
-        return item
+        return transform_note_text(item, validate_text_transform(data.get('transform')) or [1, 0, 0, 1, 0, 0], aspect)
     # Store explicit line breaks so tablet and desktop use the same layout.
     columns = (.98 - x) / (size * .0015 * min(1, 1 / aspect))
     lines = []
@@ -214,27 +252,35 @@ def prepare_text(data, aspect=4 / 3):
     item.text = '\n'.join(lines)
     if y + text_bounds(item, aspect)['height'] > .98:
         raise ValueError('文字がノートの下端を越えます。短くするか、位置・大きさを変えてください。')
-    return item
+    return transform_note_text(item, validate_text_transform(data.get('transform')) or [1, 0, 0, 1, 0, 0], aspect)
 
 
 def paint_note_texts(painter, texts, rect):
     painter.save()
     painter.setClipRect(rect)
     for item in texts:
+        painter.save()
+        painter.translate(rect.left(), rect.top())
+        if item.transform:
+            a, b, c, d, e, f = item.transform
+            w, h = rect.width(), rect.height()
+            painter.setTransform(QTransform(a, b*h/w, c*w/h, d, e*w, f*h), True)
         pixels = max(1, round(min(rect.width(), rect.height()) * item.size * .0015))
         font = QFont('sans-serif')
         font.setPixelSize(pixels)
         painter.setFont(font)
         painter.setPen(QColor(item.color))
-        x = rect.left() + item.norm_x * rect.width()
-        top = rect.top() + item.norm_y * rect.height()
+        x = item.norm_x * rect.width()
+        top = item.norm_y * rect.height()
         layout = annotation_layout(item.text, item.size, item.color, item.norm_x, rect.width() / rect.height(), item.format)
         if layout:
             renderer = QSvgRenderer(QByteArray(layout.svg.encode()))
             renderer.render(painter, QRectF(x, top, layout.width * pixels, layout.height * pixels))
+            painter.restore()
             continue
         for index, line in enumerate(item.text.split('\n')):
             painter.drawText(QPointF(x, top + pixels + index * pixels * 1.45), line)
+        painter.restore()
     painter.restore()
 
 

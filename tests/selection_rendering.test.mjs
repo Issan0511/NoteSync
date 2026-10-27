@@ -12,9 +12,9 @@ function harness(){
   vm.runInContext(`
     const elements=new Map(),frames=new Map(),timers=new Map();
     let nextFrame=0,nextTimer=0,canSend=true;
-    const metrics={baseRenders:[],draws:[],resizes:0,contextTransforms:0,pointTransforms:0,rafRequests:0,rafRuns:0,viewResets:0};
-    const sent=[],toasts=[];let baseVisible=[];
-    function fakeContext(){return {strokes:[],clearRect(){this.strokes=[];},setTransform(){metrics.contextTransforms++;},setLineDash(){},beginPath(){},moveTo(){},lineTo(){},stroke(){},save(){},restore(){},drawImage(){},fillRect(){},resetTransform(){}};}
+    const metrics={baseRenders:[],draws:[],textDraws:0,resizes:0,contextTransforms:0,pointTransforms:0,rafRequests:0,rafRuns:0,viewResets:0};
+    const sent=[],toasts=[];let baseVisible=[],baseTextVisible=[];
+    function fakeContext(){return {strokes:[],texts:[],clearRect(){this.strokes=[];this.texts=[];},setTransform(){metrics.contextTransforms++;},setLineDash(){},beginPath(){},moveTo(){},lineTo(){},stroke(){},save(){},restore(){},drawImage(){},fillRect(){},resetTransform(){}};}
     class Element {
       constructor(tag='div',id=''){
         this.tagName=tag.toUpperCase();this.id=id;this.children=[];this.listeners={};this.attributes={};this.dataset={};this.captures=new Set();this.hidden=false;
@@ -74,6 +74,8 @@ function harness(){
       {brush:'pen',color:'#202124',opacity:1,width_ratio:.004,points:[[.1,.1,.5],[.3,.3,.8]]},
       {brush:'pen',color:'#3478dc',opacity:1,width_ratio:.004,points:[[.7,.7,.4],[.8,.8,.6]]}
     ];
+    let noteTexts=[];
+    function drawNoteTexts(ctx,texts){if(texts.length)metrics.textDraws++;ctx.texts.push(...structuredClone(texts));}
     const initialStrokes=structuredClone(sketchbookStrokes);
     function finishActiveInput(){}
     function showToast(message){toasts.push(message);}
@@ -82,7 +84,7 @@ function harness(){
     function penHasContact(e){return e.pressure>0;}
     function onInkStart(){}
     function drawStroke(ctx,stroke){metrics.draws.push(structuredClone(stroke));ctx.strokes.push(structuredClone(stroke));}
-    function renderAllStrokes(strokes){metrics.baseRenders.push(structuredClone(strokes));baseVisible=structuredClone(strokes);}
+    function renderAllStrokes(strokes,texts=noteTexts){metrics.baseRenders.push(structuredClone(strokes));baseVisible=structuredClone(strokes);baseTextVisible=structuredClone(texts);}
     function updatePenUI(){}
     function adjustLayout(){renderAllStrokes(sketchbookStrokes);}
     function refreshNotebookView(){}
@@ -91,19 +93,20 @@ function harness(){
     function sendWS(message){if(!canSend)return false;sent.push(structuredClone(message));return true;}
     function handleServerMessage(msg){
       if(msg.type==='state_sync'){
-        currentDocumentId=msg.documentId||'';sketchbookStrokes=structuredClone(msg.sketchbookStrokes||msg.strokes||[]);
+        currentDocumentId=msg.documentId||'';sketchbookStrokes=structuredClone(msg.sketchbookStrokes||msg.strokes||[]);if(Array.isArray(msg.noteTexts))noteTexts=structuredClone(msg.noteTexts);
         noteMetadata={title:msg.title??noteMetadata.title,paper:msg.paper??noteMetadata.paper,notes:structuredClone(msg.notes??noteMetadata.notes)};
         renderAllStrokes(sketchbookStrokes);
       }
       else if(msg.type==='strokes_updated'||msg.type==='stroke_undone'){sketchbookStrokes=structuredClone(msg.strokes||[]);renderAllStrokes(sketchbookStrokes);}
       else if(msg.type==='strokes_cleared'){sketchbookStrokes=[];renderAllStrokes([]);}
+      else if(msg.type==='note_texts_updated'){noteTexts=structuredClone(msg.texts||[]);renderAllStrokes(sketchbookStrokes);}
     }
   `,context);
   vm.runInContext(script,context);
   vm.runInContext(`
     const transformBeforeTest=InkSelectionGeometry.transform;
     InkSelectionGeometry.transform=function(...args){metrics.pointTransforms++;return transformBeforeTest.call(this,...args);};
-    function resetMetrics(){metrics.baseRenders=[];metrics.draws=[];metrics.resizes=0;metrics.contextTransforms=0;metrics.pointTransforms=0;metrics.rafRequests=0;metrics.rafRuns=0;}
+    function resetMetrics(){metrics.baseRenders=[];metrics.draws=[];metrics.textDraws=0;metrics.resizes=0;metrics.contextTransforms=0;metrics.pointTransforms=0;metrics.rafRequests=0;metrics.rafRuns=0;}
     function visibleInk(){
       const transform=selectionLayer.style.transform||'',values=transform.startsWith('matrix(')?transform.slice(7,-1).split(',').map(Number):[1,0,0,1,0,0];
       const [a,b,c,d,e,f]=values;
@@ -286,4 +289,77 @@ test('rotation compositor matches normalized model geometry on a landscape page'
   assertPoint(h.read('sketchbookStrokes[0].points[0]'),expected);assertVisibleInk(h,expected);
   h.run('clearInkSelection()');
   assertUntransformed(h);assert.equal(h.read('visibleInk().length'),2);assertPoint(h.read('baseVisible[0].points[0]'),expected);
+});
+
+function selectFormula(h,mixed=false){
+  const bounds={x:.12,y:.15,width:.28,height:.1};
+  const item={id:'formula-1',text:'x^2+y^2',format:'latex',size:18,color:'#3478dc',norm_x:.12,norm_y:.15,
+    transform:null,bounds,baseBounds:{...bounds},renderedSvg:'<svg/>',renderedWidth:5,renderedHeight:1.5};
+  h.run('(items)=>{noteTexts=structuredClone(items)}')([item]);
+  h.run(`selectedInk=${mixed?'[0]':'[]'};selectedTextIds=['formula-1'];renderAllStrokes(sketchbookStrokes);resetMetrics();`);
+  return item;
+}
+
+test('lasso selects GPT annotations by their displayed rectangle, even without handwritten strokes',()=>{
+  const h=harness();selectFormula(h);h.run(`selectedTextIds=[];lassoPointer=1;lassoPath=[[.11,.14],[.41,.14],[.41,.26],[.11,.26]]`);
+  h.run('finishLasso')(h.event('pointerup'));
+  assert.deepEqual(h.read('selectedTextIds'),['formula-1']);assert.equal(h.read('selectionBox.hidden'),false);
+  assert.deepEqual(h.read('baseTextVisible'),[]);assert.equal(h.read('selectionCanvas.context.texts.length'),1);
+});
+
+test('text resizing previews with one compositor frame and commits editable TeX geometry',()=>{
+  const h=harness();const original=selectFormula(h);h.start({handle:'se',x:.4,y:.25});
+  for(let i=0;i<60;i++)h.move(.4+i*.004,.25+i*.0015);
+  assert.equal(h.read('metrics.textDraws'),0);assert.equal(h.read('metrics.baseRenders.length'),0);assert.equal(h.read('frames.size'),1);
+  h.finish(.68,.35);
+  const request=h.latestRequest();assert.deepEqual(request.textIds,['formula-1']);assert.deepEqual(request.indices,[]);
+  assertPoint(request.matrix,[2,0,0,2,-.12,-.15]);assert.equal(h.read('noteTexts[0].text'),original.text);assert.equal(h.read('noteTexts[0].size'),18);
+  assert.ok(Math.abs(h.read('noteTexts[0].bounds.width')-.56)<1e-9);
+  assert.deepEqual(h.read('baseTextVisible'),[]);assert.equal(h.read('selectionCanvas.context.texts.length'),1,'one cached text layer, no old background ghost');
+});
+
+test('stale annotation updates cannot snap back optimistic text before or after the matching ACK',()=>{
+  const h=harness();const original=selectFormula(h);h.start();h.finish(.4,.3);
+  const moved=h.read('noteTexts[0]');h.message({type:'note_texts_updated',documentId:'notebook-1',inkRevision:0,texts:[original]});
+  assert.deepEqual(h.read('noteTexts[0].transform'),moved.transform);
+  h.ack(true,{indices:[],textIds:['formula-1'],texts:[moved]});
+  assert.deepEqual(h.read('selectedTextIds'),['formula-1']);assert.deepEqual(h.read('noteTexts[0].transform'),moved.transform);assertUntransformed(h);
+  assert.equal(h.read('selectionCanvas.context.texts.length'),1);assert.deepEqual(h.read('baseTextVisible'),[]);
+  h.message({type:'note_texts_updated',documentId:'notebook-1',inkRevision:0,texts:[original]});assert.deepEqual(h.read('noteTexts[0].transform'),moved.transform);
+});
+
+test('rejected text resize restores authoritative text without losing original TeX',()=>{
+  const h=harness();const original=selectFormula(h);h.start();h.finish(.4,.3);
+  h.message({type:'state_sync',documentId:'notebook-1',inkRevision:2,sketchbookStrokes:h.read('initialStrokes'),noteTexts:[original]});
+  h.ack(false,{inkRevision:2,indices:[],textIds:[]});
+  assert.deepEqual(h.read('noteTexts'),[original]);assert.deepEqual(h.read('selectedTextIds'),[]);assert.equal(h.read('baseTextVisible.length'),1);assertUntransformed(h);
+});
+
+test('text-only copy and paste send portable text rather than generated SVG pixels',()=>{
+  const h=harness();selectFormula(h);
+  h.run(`selectionActions.dispatch('click',{target:selectionActions.querySelector('[data-ink-action="copy"]')})`);
+  assert.equal(h.read('selectionClipboard.length'),0);assert.equal(h.read('selectionTextClipboard.length'),1);
+  assert.equal(h.read('selectionTextClipboard[0].renderedSvg'),null);
+  h.run('pasteButton.click()');const request=h.latestRequest();assert.equal(request.action,'paste');assert.deepEqual(request.strokes,[]);
+  assert.equal(request.texts[0].text,'x^2+y^2');assert.equal(request.texts[0].format,'latex');
+});
+
+test('mixed ink and text share one transform request and one selection frame',()=>{
+  const h=harness();selectFormula(h,true);h.start();h.finish(.4,.3);
+  const request=h.latestRequest();assert.deepEqual(request.indices,[0]);assert.deepEqual(request.textIds,['formula-1']);
+  assertPoint(h.read('sketchbookStrokes[0].points[0]'),[.3,.2,.5]);
+  assertPoint(h.read('noteTexts[0].transform'),[1,0,0,1,.2,.1]);assert.deepEqual(h.read('baseTextVisible'),[]);
+});
+
+for(const textFirst of [true,false])test(`another browser receives both halves of a mixed edit (${textFirst?'text':'ink'} first)`,()=>{
+  const h=harness(),item=selectFormula(h,true);h.run('clearInkSelection()');
+  const strokes=h.read('initialStrokes');strokes[0].points[0]=[.4,.5,.5];
+  const moved={...item,transform:[2,0,0,2,-.1,-.1]};
+  const ink={type:'strokes_updated',documentId:'notebook-1',inkRevision:1,strokes};
+  const text={type:'note_texts_updated',documentId:'notebook-1',inkRevision:1,texts:[moved]};
+  for(const message of textFirst?[text,ink]:[ink,text])h.message(message);
+  assert.deepEqual(h.read('sketchbookStrokes'),strokes);assert.deepEqual(h.read('noteTexts'),[moved]);
+  assert.deepEqual(h.read('baseTextVisible'),[moved]);assert.deepEqual(h.read('baseVisible'),strokes);
+  h.message({...ink,strokes:[]});h.message({...text,texts:[]});
+  assert.deepEqual(h.read('sketchbookStrokes'),strokes);assert.deepEqual(h.read('noteTexts'),[moved]);
 });

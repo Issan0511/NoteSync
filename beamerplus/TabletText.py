@@ -42,11 +42,15 @@ NOTE_TEXT_SCRIPT = r"""
       try{
         ctx.textBaseline='alphabetic';
         for(const item of texts){
+          ctx.save();
+          try{
+          if(item.transform){const [a,b,c,d,e,f]=item.transform;ctx.transform(a,b*height/width,c*width/height,d,e*width,f*height);}
           const pixels=Math.max(1,Math.round(Math.min(width,height)*item.size*.0015)),svg=noteTextRenderedSvg(item);
           if(!svg){drawPlainNoteText(ctx,item,width,height,pixels);continue;}
           const entry=noteTextImage(svg,pinned);
           if(entry.state==='ready')ctx.drawImage(entry.image,item.norm_x*width,item.norm_y*height,item.renderedWidth*pixels,item.renderedHeight*pixels);
           else if(entry.state==='failed')drawPlainNoteText(ctx,item,width,height,pixels);
+          }finally{ctx.restore();}
         }
       }finally{ctx.restore();}
     }
@@ -69,7 +73,12 @@ INSTALL_TEXT_SCRIPT = r"""
         const split=typeof selectionBackgroundSplit!=='undefined'&&selectionBackgroundSplit;
         const indices=split&&typeof selectedInk!=='undefined'?new Set(selectedInk):null;
         const background=indices?strokes.filter((_,index)=>!indices.has(index)):strokes;
-        if(typeof renderBaseInk==='function')renderBaseInk(background);
+        if(typeof renderBaseInk==='function'){
+          renderBaseInk(background,typeof selectionBackgroundTexts==='function'?selectionBackgroundTexts():noteTexts);
+          if(typeof selectedTextIds!=='undefined'&&selectedTextIds.length&&typeof renderInkSelection==='function'){
+            renderInkSelection();if(typeof selectionDrag!=='undefined'&&selectionDrag&&typeof paintSelectionPreview==='function')paintSelectionPreview(selectionDrag);
+          }
+        }
         else renderAllStrokes(background);
       });
     };
