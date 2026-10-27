@@ -15,13 +15,13 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication
 from websockets.protocol import State
 
-from beamerplus.NotebookExports import create_notebook_backup
+from notesync.NotebookExports import create_notebook_backup
 try:
-    from beamerplus.NotebookText import NoteText
+    from notesync.NotebookText import NoteText
 except ImportError:
     NoteText = None
-from beamerplus.NotebookWindow import NotebookWindow
-from beamerplus.WebServer import WebBridge, WebServer
+from notesync.NotebookWindow import NotebookWindow
+from notesync.WebServer import WebBridge, WebServer
 
 
 class NotebookFileTestCase(unittest.TestCase):
@@ -33,8 +33,8 @@ class NotebookFileTestCase(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name) / 'notes.json'
-        for target in ('beamerplus.WebServer.WebServer.start', 'beamerplus.WebServer.WebServer.stop',
-                       'beamerplus.NotebookWindow.NotebookBridge'):
+        for target in ('notesync.WebServer.WebServer.start', 'notesync.WebServer.WebServer.stop',
+                       'notesync.NotebookWindow.NotebookBridge'):
             mocked = patch(target, return_value=None, create=True)
             mocked.start()
             self.addCleanup(mocked.stop)
@@ -251,7 +251,7 @@ class PrivateReplyTests(unittest.IsolatedAsyncioTestCase):
 class DirectoryNotebookFileTests(NotebookFileTestCase):
     def setUp(self):
         super().setUp()
-        from beamerplus.NotebookModel import NotebookStore
+        from notesync.NotebookModel import NotebookStore
         self.path = Path(self.directory.name) / 'library'
         original = self.window.store
         self.window.store = NotebookStore(self.path)

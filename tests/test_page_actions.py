@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from beamerplus.NotebookExports import create_notebook_backup, parse_notebook_backup
+from notesync.NotebookExports import create_notebook_backup, parse_notebook_backup
 from test_notebook_pages import PageHost, text
 
 

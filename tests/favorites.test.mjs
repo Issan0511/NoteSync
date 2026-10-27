@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 
-const source=fs.readFileSync(new URL('../beamerplus/TabletFavorites.py',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../notesync/TabletFavorites.py',import.meta.url),'utf8');
 const model=source.split('FAVORITES_MODEL_SCRIPT = r"""')[1].split('"""')[0];
 const script=model+source.split('FAVORITES_SCRIPT = FAVORITES_MODEL_SCRIPT + r"""')[1].split('"""')[0];
 
@@ -85,7 +85,7 @@ function uiHarness(){
     let selectedBrush='pen',currentColor='#202124',currentTool='pen';
     const toolSizes={pen:4,highlighter:22},toolOpacities={pen:1,highlighter:.3};
     function currentPreset(){const tool=selectedBrush==='highlighter'?'highlighter':'pen';return {brush:selectedBrush,color:currentColor,size:toolSizes[tool],opacity:toolOpacities[tool]};}
-    function persistPens(){localStorage.setItem('beamerplus_favorite_pens',JSON.stringify(favorites));localStorage.setItem('beamerplus_current_pen',JSON.stringify(currentPreset()));}
+    function persistPens(){localStorage.setItem('notesync_favorite_pens',JSON.stringify(favorites));localStorage.setItem('notesync_current_pen',JSON.stringify(currentPreset()));}
     function closeOverlays(){}
     function openOverlay(id){closeOverlays();$(id).hidden=false;}
     function finishActiveInput(){}
@@ -106,7 +106,7 @@ test('favorite editor saves to the same persisted slot and leaves the current pe
   h.run("$('favorite-editor-size').dispatch('input','36')");
   h.run("$('favorite-editor-custom-color').dispatch('input','#3478dc')");
   h.click('favorite-editor-save');
-  const stored=h.read("JSON.parse(saved.get('beamerplus_favorite_pens'))");
+  const stored=h.read("JSON.parse(saved.get('notesync_favorite_pens'))");
   assert.equal(stored.length,2);assert.equal(stored[1].size,36);assert.equal(stored[1].color,'#3478dc');
   assert.equal(h.read('currentColor'),'#202124');assert.equal(h.read('toolSizes.pen'),4);
   assert.equal(h.read("$('favorite-manager-overlay').hidden"),false);
@@ -122,12 +122,12 @@ test('round color button opens chooser and saves the selected current color with
   assert.equal(h.read("$('quick-color-overlay').hidden"),false);
   h.run("$('quick-color-swatches').children.find(b=>b.dataset.favoriteColor==='#ef5350').dispatch('click')");
   assert.equal(h.read('currentColor'),'#ef5350');assert.equal(h.read('favorites[0].color'),'#202124');
-  assert.equal(h.read("JSON.parse(saved.get('beamerplus_current_pen')).color"),'#ef5350');
+  assert.equal(h.read("JSON.parse(saved.get('notesync_current_pen')).color"),'#ef5350');
   assert.equal(h.read("$('quick-color-overlay').hidden"),true);
   assert.equal(h.read("$('wheel-current-color').style.background"),'#ef5350');
 });
 
 test('native custom color changes current color and is persisted',()=>{
   const h=uiHarness();h.click('wheel-current-color');h.run("$('quick-custom-color').dispatch('input','#123456')");
-  assert.equal(h.read('currentColor'),'#123456');assert.equal(h.read("JSON.parse(saved.get('beamerplus_current_pen')).color"),'#123456');
+  assert.equal(h.read('currentColor'),'#123456');assert.equal(h.read("JSON.parse(saved.get('notesync_current_pen')).color"),'#123456');
 });

@@ -1,16 +1,41 @@
-# BeamerPlus Notes
+# NoteSync
 
-GalaxyのS Penで書き、Claude Sonnetと考えるための手書きノートです。PC側で保存とClaude API接続を行い、タブレットはブラウザで使います。起動時はノート専用の画面になり、スライド・発表・プロジェクタ操作は表示しません。
+手書きノートを保存し、PC・タブレット・MCPへ同期するアプリです。ノート原稿を中心に、チューターと課題提出を別リポジトリで開発します。
+
+| プロジェクト | 担当 | 追加で必要なもの |
+| --- | --- | --- |
+| **NoteSync**（このリポジトリ） | 編集、科目・添付資料、保存、同期、MCP、PDF書き出し | なし |
+| **NoteTutor**（`../NoteTutor`） | 学習支援の指示、質問応答、手書き転記 | NoteSyncの拡張API、Claude機能にはAnthropic APIキー |
+| **KulmsSubmit**（`../KulmsSubmit`） | 大学認証、課題要件・答案確認、アップロード・提出 | KULMS認証。ノートPDF化時だけNoteSyncの書き出しコマンド |
+
+NoteSyncはNoteTutorとKulmsSubmitを入れなくても動作します。モデルへの通信、APIキーの読込、大学への提出はコアに含みません。構成と公開インターフェースは [ARCHITECTURE.md](ARCHITECTURE.md) にまとめています。
 
 ## 起動
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/python -m beamerplus.main
+.venv/bin/python -m pip install -e '.[mcp]'
+.venv/bin/notesync
 ```
 
-PCの「タブレット接続 · QR」を開き、タブレットでQRコードを読み取ってください。PCとタブレットを同じTailnetに入れると、Tailscaleの接続先を優先します。Tailscaleで確認できた端末とこのPCではパスコード入力は不要です。PCのTailnetアドレスとポートが同じなら、再起動後も同じURLを使えます。通常のLAN接続ではパスコード付きURLを使います。
+チューターも使う場合は、同じ環境に `../NoteTutor` を追加します。
+
+```bash
+.venv/bin/python -m pip install -e ../NoteTutor
+.venv/bin/notetutor
+```
+
+インストール済みの拡張は `notesync.extensions` から読み込みます。ノート単独で起動するには `NOTESYNC_DISABLE_EXTENSIONS=1 .venv/bin/notesync`、チューターを取り外すには `.venv/bin/python -m pip uninstall note-tutor` を使います。モデル設定と `.env` はNoteTutorが管理します。
+
+PCの「タブレット接続 · QR」を開き、タブレットでQRコードを読み取ってください。同じTailnetではTailscaleの接続先を優先し、確認済みの端末とこのPCはパスコード入力を省略できます。通常のLAN接続ではパスコード付きURLを使います。
+
+## 旧アプリからの移行
+
+旧アプリを保存して終了し、NoteSyncを起動してください。初回起動時に `BeamerPlus Notes/` の原稿を `NoteSync/` へコピーし、内容ハッシュを照合します。元データは残り、接続トークンはコピーしません。旧単一JSONは科目ごとのライブラリへ移行します。旧アプリがコピー後に元データを書き換えた場合は、競合として停止し、両方を保持します。
+
+Linuxの標準保存先は `~/.local/share/NoteSync/library/`、macOSは `~/Library/Application Support/NoteSync/library/`、Windowsは `%APPDATA%/NoteSync/library/` です。`NOTESYNC_NOTEBOOK_PATH` で変更できます。旧 `BEAMERPLUS_NOTEBOOK_PATH`・`BEAMERPLUS_MCP_FILE` は移行用の別名として受け付けます。
+
+この端末ではプロジェクトを `~/Projects/NoteSync` へ改名し、`~/Projects/BeamerPlus` は既存の起動パス用のシンボリックリンクとして残しています。実行コマンドとMCP名は `notesync` です。Gitの履歴と元プロジェクトの著作権表示は維持しています。
 
 ## Galaxyでの操作
 
@@ -36,59 +61,9 @@ S Penボタンは **Samsung Internet** で使用してください。Galaxy Tab 
 
 お気に入りとペン設定は、そのブラウザのローカルストレージに保存します。
 
-## ノートの保存
+## 保存と科目・添付資料
 
-筆跡とノート名・用紙設定はPCへ自動保存します。保存先はQtのアプリデータフォルダ内の `BeamerPlus Notes/notebooks.json` です。Linuxでは通常 `~/.local/share/BeamerPlus Notes/notebooks.json` になります。`BEAMERPLUS_NOTEBOOK_PATH` で保存先を指定することもできます。APIキーはこのファイルに含めません。
-
-右上の「保存済み」を押すと、最終保存日時と再保存ボタンが表示されます。PCに書き込みが完了してから保存済みと表示し、保存に失敗した場合はノートの切り替えや終了を止めて筆跡を保持します。Ctrl／⌘＋Sでも保存できます。
-
-メニューの「書き出し・バックアップ」から、現在のページをPNG画像、ノート全ページを1つのPDF、全ページを編集可能な `.spennotes` バックアップにできます。ノート一覧からは、ゴミ箱を含むすべてのノートをバックアップできます。「取り込む」でバックアップを読み込むと、元のノートを残して新しいノートとして追加します。取り込めるファイルは10MB・200冊・合計1000ページまでです。バックアップにはAPIキーや接続情報を含めません。
-
-以前のノートは内容をそのまま1ページ目へ移行します。ページを切り替える前に現在の筆跡を保存し、保存に失敗した場合は切り替えを止めて筆跡を保持します。
-
-筆記中の接続先PCが必要です。右上に未接続と表示された場合は、接続が戻ってから書いてください。
-
-選択した筆跡や文字・数式の移動・拡大縮小はブラウザですぐに表示し、その後PCへ保存します。
-
-## Claudeに質問
-
-PCの「Claude設定」でAnthropicのAPIキーを入力します。標準モデルは `claude-sonnet-5-5` です。`ANTHROPIC_API_KEY` と `BEAMERPLUS_CLAUDE_MODEL` でも設定できます。
-
-タブレットの「Claudeに聞く」を開くと、今のノート画像を添えて質問できます。同じノートでは会話を続けられます。APIキーはPCのプロセス内で使用し、ブラウザやノートの保存ファイルには渡しません。GUIから入力したキーはアプリを終了すると失われるため、再起動時には再入力してください。
-
-## GPTと話しながらノートを共有する
-
-スマホのChatGPTからこのPCのCodexへリモート接続し、音声で話しながらBeamerPlusのノートを見せられます。CodexはMCPで現在のノート画像を取得し、頼まれた補足を青い文字で余白へ書き込めます。この連携用にOpenAI APIキーを用意する必要はありません。会話は接続先のChatGPT／Codexの利用枠を使います。
-
-PCで一度、BeamerPlusのフォルダから実行します。
-
-```bash
-.venv/bin/python -m pip install -e '.[mcp]'
-codex mcp add beamerplus -- "$PWD/.venv/bin/python" -m beamerplus.NotebookMCP
-```
-
-BeamerPlusを起動し直し、MCPを読み込んだ新しいCodexチャットで「今のノートを見て。家庭教師として、必要な補足を余白に書いて」と話しかけてください。スマホからは、そのPC・チャットへリモート接続します。単独のモバイルチャットへローカルMCPが直接接続される仕組みではありません。PCの「GPT連携」で案内を開けます。
-
-- **見る**: `read_current_note` は、現在開いているノートを1600px幅のPNGと更新番号で返します。保存前の最新の筆跡と、GPTの書き込みも含みます。
-- **書く**: `add_note_text` は、位置を指定して短い補足を書き込みます。文字はPCとタブレットへ反映され、ノートと一緒に保存されます。文字を追加するたびに「戻す」で1回ずつ取り消せます。消しゴムでも消せます。
-- **直す**: `remove_note_text` は、識別子を指定した文字だけを消します。手書きの筆跡は消しません。
-- **更新を確かめる**: `get_note_status` は画像を送らずに更新番号を返します。ノートが変わったら画像を取り直します。
-
-GPTが見たり書いたりするのは、現在表示しているページです。メタデータの `page_id`・`page_index`（0始まり）・`page_count` でページを確認でき、ページ切替後は以前の更新番号で書き込めません。
-
-MCPは動画のような常時視聴ではありません。会話の際に最新のノートを読み取る方式です。別のノートへ切り替わった場合、画像取得後に内容が変わった場合、筆記・消去中の場合は、書き込みを拒否して読み直しを求めます。
-
-GPTの注釈にはTeX数式も書けます。文章の中は `$H(X\mid Y)$` または `\(H(X\mid Y)\)`、独立した数式は `$$\frac{1}{n}\sum_{i=1}^{n}x_i$$` または `\[...\]` で囲みます。`add_note_text` の `format="latex"` を使うと全文を数式として扱います。分数・総和・積分・行列・alignedに対応し、TeXの原稿ファイル全体や独自マクロは扱いません。数式はPCでSVGへ変換し、PC・タブレット・PNG/PDFで同じものを描きます。外部のTeX環境やCDNへの接続は不要です。
-
-アプリ更新前からタブレットの画面を開いている場合は、一度ページを再読み込みしてください。WebSocketが再接続しても、古い画面のプログラムは自動で入れ替わりません。今後の更新では画面の版を確認し、「保存して画面を更新」の案内を出します。
-
-連携の窓口はこのPCのループバックだけで待ち受け、毎回生成する認証情報を使います。接続ファイルは通常、アプリデータフォルダの `BeamerPlus Notes/mcp-connection.json` です。`BEAMERPLUS_MCP_FILE` を指定する場合は、BeamerPlusとMCPサーバーの両方で同じ値にしてください。接続ファイルを共有・公開しないでください。MCPからの書き込みが `saved: false` を返した場合は画面には反映されていますが保存できていないため、再送せずPCの保存先を確認してください。
-
-接続方法の仕様は [OpenAIのMCPドキュメント](https://learn.chatgpt.com/docs/extend/mcp)、音声とリモート接続は [ChatGPT Voice](https://learn.chatgpt.com/docs/features/voice) を参照してください。
-
-## ノートの保存と科目・添付資料
-
-標準の保存先はアプリデータ内の `BeamerPlus Notes/library/` です。Linuxでは通常 `~/.local/share/BeamerPlus Notes/library/` です。
+標準の保存先はアプリデータ内の `NoteSync/library/` です。Linuxでは通常 `~/.local/share/NoteSync/library/` です。
 
 ```text
 library/
@@ -111,36 +86,66 @@ library/
 
 保存は一時ファイルとatomicな一覧の更新で確定します。途中で失敗した場合は直前の確定内容を読み戻します。同じ保存先を開いた複数アプリの上書きを検出します。各ノートの直近10版と、科目移動前・旧形式の控えを `.history/` に保持します。`library/` 全体をコピーすれば原稿と資料をまとめて保管できます。通常の編集・整理はアプリ内で行ってください。
 
-`BEAMERPLUS_NOTEBOOK_PATH` にディレクトリを指定するとこの形式になり、既存の `.json` を明示した場合は従来形式を維持します。
+`NOTESYNC_NOTEBOOK_PATH` にディレクトリを指定するとこの形式になり、既存の `.json` を明示した場合は従来形式を維持します。
 
-## 提出機能との分離
+## MCPでノートを共有
 
-KULMSの認証・課題確認・答案提出は、別Gitリポジトリ **KULMS Submit**（同じ親フォルダの `../KulmsSubmit`）に分離しました。セットアップとMCPの使い方はそちらのREADMEを参照してください。
+スマホのChatGPTからこのPCのCodexへリモート接続し、音声で話しながらNoteSyncのノートを見せられます。CodexはMCPでノート画像を取得し、補足をデフォルトの黒字で余白へ書き込めます。この連携用にOpenAI APIキーを用意する必要はありません。会話は接続先のChatGPT／Codexの利用枠を使います。
 
-ノート側の公開連携は次の2点です。
+PCで一度、NoteSyncのフォルダから実行します。
 
-- 保存済み原稿: `library/index.json` の相対パス・SHA256を検証して各ノートを読む。旧版の `notebooks.json` も読める。
-- PDF書き出し: `beamerplus-export snapshot.json answer.pdf`。実行にはSpenNotesのPython環境を使用する。起動中アプリの最新保存は認証付きloopbackの `save_note_snapshot(note_id)` で行う。
+```bash
+.venv/bin/python -m pip install -e '.[mcp]'
+codex mcp add notesync -- "$PWD/.venv/bin/python" -m notesync.NotebookMCP
+```
 
-提出側は原稿のコピーをPDF化し、元ノートには書き込みません。本人の答案完成・提出指示と、課題要件・提出物の内容確認を経て提出します。
+NoteSyncを起動し直し、MCPを読み込んだ新しいCodexチャットで「今のノートを見て。家庭教師として、必要な補足を余白に書いて」と話しかけてください。スマホからは、そのPC・チャットへリモート接続します。単独のモバイルチャットへローカルMCPが直接接続される仕組みではありません。PCの「ノート同期 · MCP」で案内を開けます。
+
+- **見る**: `read_current_note` は、現在開いているノートを1600px幅のPNGと更新番号で返します。保存前の最新の筆跡と、GPTの書き込みも含みます。
+- **別ページを見る**: `list_note_pages` で同じノートのページ一覧を取得し、`read_note_page(page_id=..., note_id=...)` で必要なページを読めます。Codexは文脈に応じて参照先を判断し、ユーザーの表示・筆記中のペン・Undo履歴を切り替えません。`note_id` は別ノートへ切り替わった場合の取り違え防止に指定できます。
+- **書く**: `add_note_text` は、位置を指定して短い補足を書き込みます。省略時の色は黒（`#000000`）で、`color` を指定すれば他の色も使えます。既存の文字の色は変えません。文字はPCとタブレットへ反映され、ノートと一緒に保存されます。文字を追加するたびに「戻す」で1回ずつ取り消せます。消しゴムでも消せます。
+- **直す**: `remove_note_text` は、識別子を指定した文字だけを消します。手書きの筆跡は消しません。
+- **更新を確かめる**: `get_note_status` は画像を送らずに更新番号を返します。NoteTutorの先読み中は `read_note_context` で変更した式を取得でき、画像が必要な場合だけ取り直します。
+
+書き込み先は現在表示しているページです。別ページの閲覧は表示を変えずに行います。メタデータの `page_id`・`page_index`（0始まり）・`page_count` でページを確認でき、ページ切替後や別ページを読んだ更新番号では書き込めません。
+
+### 30秒ごとの無言の確認
+
+MCP接続中はモデルAPIを呼ばずにサーバーが30秒ごとに表示中のノートを確認し、最新のPNG・先読み結果・確認日時をメモリに保持します。同じ更新番号ならPNGを再生成せず、転記の進捗だけを更新します。確認処理は読み取りだけで、書き込みや音声の生成は行いません。MCP接続が閉じると定期処理も停止します。
+
+- `read_note_observation()`：直近の確認結果を取得します。`include_image=false` なら画像を省けます。
+- `read_note_observation(wait_for_next=true)`：次の定期確認を無言で待って受け取ります。短い間隔で繰り返し確認する必要はありません。
+- `notesync://observation/current`：確認結果のJSONリソース。購読クライアントへ `notifications/resources/updated` を送ります。PNGは `notesync://observation/current/image` で取得できます。
+
+確認を受け取っただけでは、相槌・説明・催促・ノートへの追記をしない運用にします。`checked_at` はサーバーの確認日時です。保存された画像を取得したことと、Codexがその画像を解釈したことは区別します。MCPのリソースをいつモデルへ渡すかはクライアントが決めるため、待機中のCodexを自動で再推論させる動作はMCPだけでは保証しません（[MCPのリソース仕様](https://modelcontextprotocol.io/specification/2025-11-25/server/resources)）。
+
+定期確認の画像は古い場合があるので、書き込み直前は `read_current_note` を使います。別のノートへ切り替わった場合、画像取得後に内容が変わった場合、筆記・消去中の場合は、書き込みを拒否して読み直しを求めます。更新を反映するにはNoteSyncを再起動し、MCPを再接続してください。
+
+GPTの注釈にはTeX数式も書けます。文章の中は `$H(X\mid Y)$` または `\(H(X\mid Y)\)`、独立した数式は `$$\frac{1}{n}\sum_{i=1}^{n}x_i$$` または `\[...\]` で囲みます。`add_note_text` の `format="latex"` を使うと全文を数式として扱います。分数・総和・積分・行列・alignedに対応し、TeXの原稿ファイル全体や独自マクロは扱いません。数式はPCでSVGへ変換し、PC・タブレット・PNG/PDFで同じものを描きます。外部のTeX環境やCDNへの接続は不要です。
+
+アプリ更新前からタブレットの画面を開いている場合は、一度ページを再読み込みしてください。WebSocketが再接続しても、古い画面のプログラムは自動で入れ替わりません。今後の更新では画面の版を確認し、「保存して画面を更新」の案内を出します。
+
+連携の窓口はこのPCのループバックだけで待ち受け、毎回生成する認証情報を使います。接続ファイルは通常、アプリデータフォルダの `NoteSync/mcp-connection.json` です。`NOTESYNC_MCP_FILE` を指定する場合は、NoteSyncとMCPサーバーの両方で同じ値にしてください。接続ファイルを共有・公開しないでください。MCPからの書き込みが `saved: false` を返した場合は画面には反映されていますが保存できていないため、再送せずPCの保存先を確認してください。
+
+接続方法の仕様は [OpenAIのMCPドキュメント](https://learn.chatgpt.com/docs/extend/mcp)、音声とリモート接続は [ChatGPT Voice](https://learn.chatgpt.com/docs/features/voice) を参照してください。
+
+## 提出との連携
+
+原稿はNoteSyncに置き、提出用のコピー・確認記録・受付はKulmsSubmitが管理します。提出用PDFの作成は `notesync-export snapshot.json answer.pdf`、起動中の最新保存は認証付きloopbackの `save_note_snapshot(note_id)` で行います。提出側はノート本体へ書き込みません。本人の答案完成・提出指示と課題ページの内容確認を経て提出します。
 
 ## 入力の確認
 
-ボタンが反応しない場合は、別ターミナルで以下を起動します。
+`.venv/bin/python -m notesync.PenDiagnostics` で診断ページを起動し、タブレットから `http://PCのTailnetアドレス:8081/` を開きます。ノートの再起動は不要です。終了時はCtrl+Cを押します。
+
+## 検証
 
 ```bash
-.venv/bin/python -m beamerplus.PenDiagnostics
-```
-
-タブレットで `http://PCのTailnetアドレス:8081/` を開くと入力を確認できます。ノートの再起動は不要です。診断ページはこのPCとTailscaleで確認できた端末からのみ使え、ボタン・接触の情報をメモリに保持します。筆跡・座標・キー入力・APIキーは収集しません。診断後は起動したターミナルで `Ctrl+C` を押して終了してください。
-
-## 確認用テスト
-
-```bash
-.venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+NOTESYNC_DISABLE_EXTENSIONS=1 QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
 for task_test in tests/*.test.mjs; do node "$task_test" || exit; done
 ```
 
-## ライセンス
+NoteTutorのテストはそちらのリポジトリで実行します。移行テストは一時フォルダを使い、本人の原稿・LMS・モデルAPIを変更しません。
 
-MIT License。HaruhiroOboraさんの [BeamerPlus](https://github.com/HaruhiroObora/BeamerPlus) を元に、S PenとClaudeを使うノートとして拡張しています。元の著作権表示は [LICENSE](LICENSE) に保持しています。
+## ライセンスと由来
+
+MIT License。HaruhiroOboraさんの [BeamerPlus](https://github.com/HaruhiroObora/BeamerPlus) の描画・タブレット入力を基に発展しました。元のスライド・ポインターアプリとの役割を区別するため、ノート本体をNoteSync、学習支援をNoteTutorとして分離しています。著作権表示は [LICENSE](LICENSE) に保持しています。既存バックアップとの互換性のため `.spennotes` 形式は継続します。

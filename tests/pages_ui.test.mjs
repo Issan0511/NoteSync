@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 
-const script=fs.readFileSync(new URL('../beamerplus/TabletPages.py',import.meta.url),'utf8')
+const script=fs.readFileSync(new URL('../notesync/TabletPages.py',import.meta.url),'utf8')
   .split('PAGES_SCRIPT = r"""')[1].split('"""')[0];
 const pages=[{id:'note-a',index:0,strokeCount:4,textCount:1,paper:'grid',aspect:4/3},{id:'page-b',index:1,strokeCount:0,textCount:0,paper:'plain',aspect:4/3}];
 
@@ -43,7 +43,7 @@ function harness(){
     function closeOverlays(){}
     function sendWS(message){events.push('send:'+message.type);if(!canSend||!notebookReady)return false;sent.push(structuredClone(message));return true;}
     function handleServerMessage(message){handled.push(structuredClone(message));if(message.type==='state_sync'){currentDocumentId=message.documentId;currentNotebookId=message.notebookId||currentNotebookId;if(message.sketchbookStrokes)sketchbookStrokes=structuredClone(message.sketchbookStrokes);if(message.noteTexts)noteTexts=structuredClone(message.noteTexts);}}
-    function updateAssistantConnection(connected){notebookReady=connected;}
+    function updateExtensionConnection(connected){notebookReady=connected;}
     // TabletNavigation registers its capture listener before the pages module.
     stage.addEventListener('pointerdown',event=>{if(event.pointerType==='touch'&&penOnlyToggle.checked&&!event.target.selectionTarget){navigationStarts++;event.preventDefault();event.stopImmediatePropagation();}},{capture:true});
     stage.addEventListener('pointermove',()=>navigationMoves++);
@@ -124,9 +124,9 @@ test('ink and paper mutations are scoped to the current page and explicitly old 
 });
 
 test('disconnect releases pending page controls and ignores a late success result',()=>{
-  const h=harness();h.click('notebook-page-next');const requestId=h.read('notebookPagePending.requestId');h.run('updateAssistantConnection(false)');
+  const h=harness();h.click('notebook-page-next');const requestId=h.read('notebookPagePending.requestId');h.run('updateExtensionConnection(false)');
   assert.equal(h.read('notebookPagePending'),null);assert.equal(h.read("$('notebook-page-add').disabled"),true);assert.equal(h.read('currentDocumentId'),'note-a');
-  h.message({type:'note_page_result',requestId,ok:true,pageId:'page-b'});assert.equal(h.read('currentDocumentId'),'note-a');h.run('updateAssistantConnection(true)');assert.equal(h.read("$('notebook-page-add').disabled"),false);
+  h.message({type:'note_page_result',requestId,ok:true,pageId:'page-b'});assert.equal(h.read('currentDocumentId'),'note-a');h.run('updateExtensionConnection(true)');assert.equal(h.read("$('notebook-page-add').disabled"),false);
 });
 
 test('failed transmission and invalid selections keep the current page available',()=>{

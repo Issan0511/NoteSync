@@ -6,10 +6,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from beamerplus.NotebookLibrary import NotebookLibraryMixin
-from beamerplus.NotebookModel import NotebookController, NotebookStore
+from notesync.NotebookLibrary import NotebookLibraryMixin
+from notesync.NotebookModel import NotebookController, NotebookStore
 try:
-    from beamerplus.NotebookText import NoteText
+    from notesync.NotebookText import NoteText
 except ImportError:
     NoteText = None
 
@@ -95,12 +95,12 @@ class NotebookLibraryTests(unittest.TestCase):
         self.host = LibraryHost(self.path)
 
     def test_save_states_timestamp_and_noop_autosave_does_not_touch_updated_at(self):
-        with patch('beamerplus.NotebookLibrary._now', return_value='2026-10-26T01:00:00.000Z'):
+        with patch('notesync.NotebookLibrary._now', return_value='2026-10-26T01:00:00.000Z'):
             self.host.draw()
             updated = self.host.store.active['updatedAt']
             self.assertEqual(self.host._get_web_status()['saveState'], 'dirty')
             self.assertTrue(self.host.save_notebook())
-        with patch('beamerplus.NotebookLibrary._now', return_value='2026-10-26T02:00:00.000Z'):
+        with patch('notesync.NotebookLibrary._now', return_value='2026-10-26T02:00:00.000Z'):
             self.assertTrue(self.host.save_notebook())
         self.assertEqual(self.host.store.active['updatedAt'], updated)
         status = self.host._get_web_status()

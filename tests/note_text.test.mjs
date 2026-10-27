@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 
-const script=fs.readFileSync(new URL('../beamerplus/TabletText.py',import.meta.url),'utf8')
+const script=fs.readFileSync(new URL('../notesync/TabletText.py',import.meta.url),'utf8')
   .split('NOTE_TEXT_SCRIPT = r"""')[1].split('"""')[0];
 
 test('typed tutor text stays literal and uses the same lines and geometry when zoomed',()=>{

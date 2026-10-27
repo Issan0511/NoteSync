@@ -7,10 +7,10 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from beamerplus.NotebookLibrary import NotebookLibraryMixin
-from beamerplus.NotebookModel import NotebookController, NotebookStore
-from beamerplus.NotebookPages import NotebookPagesMixin
-from beamerplus.NotebookText import NoteText
+from notesync.NotebookLibrary import NotebookLibraryMixin
+from notesync.NotebookModel import NotebookController, NotebookStore
+from notesync.NotebookPages import NotebookPagesMixin
+from notesync.NotebookText import NoteText
 
 
 def stroke():
@@ -213,7 +213,7 @@ class NotebookPageCommandTests(unittest.TestCase):
         first = self.host.store.active_page['id']
         self.assertTrue(self.host.command('add'))
         timestamp = self.host.store.active['updatedAt']
-        with patch('beamerplus.NotebookLibrary._now', return_value='2099-01-01T00:00:00.000Z'):
+        with patch('notesync.NotebookLibrary._now', return_value='2099-01-01T00:00:00.000Z'):
             self.assertTrue(self.host.command('select', pageId=first))
         self.assertEqual(self.host.store.active['updatedAt'], timestamp)
         self.host.draw()

@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import {test} from 'node:test';
 
 function script(file, assignment) {
-  return fs.readFileSync(new URL('../beamerplus/' + file, import.meta.url), 'utf8')
+  return fs.readFileSync(new URL('../notesync/' + file, import.meta.url), 'utf8')
     .split(assignment + ' = ')[1].split('r"""')[1].split('"""')[0];
 }
 

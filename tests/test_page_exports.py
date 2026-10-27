@@ -7,7 +7,7 @@ import pymupdf
 from PySide6.QtCore import QRect
 from PySide6.QtGui import QColor, QImage, QPainter
 
-from beamerplus import NotebookExports as exports
+from notesync import NotebookExports as exports
 from tests.test_notebook_exports import sample_note, TEXT_ANNOTATIONS_AVAILABLE
 
 

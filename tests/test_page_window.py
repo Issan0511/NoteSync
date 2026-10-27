@@ -15,7 +15,7 @@ import pymupdf
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
-from beamerplus.NotebookWindow import NotebookWindow
+from notesync.NotebookWindow import NotebookWindow
 
 
 def canonical(value):
@@ -31,8 +31,8 @@ class NotebookPageWindowTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name) / 'pages.json'
-        for target in ('beamerplus.WebServer.WebServer.start', 'beamerplus.WebServer.WebServer.stop',
-                       'beamerplus.NotebookWindow.NotebookBridge'):
+        for target in ('notesync.WebServer.WebServer.start', 'notesync.WebServer.WebServer.stop',
+                       'notesync.NotebookWindow.NotebookBridge'):
             mocked = patch(target, return_value=None)
             mocked.start()
             self.addCleanup(mocked.stop)

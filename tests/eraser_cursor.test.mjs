@@ -3,11 +3,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 
-const script = fs.readFileSync(new URL('../beamerplus/TabletEraserCursor.py', import.meta.url), 'utf8')
+const script = fs.readFileSync(new URL('../notesync/TabletEraserCursor.py', import.meta.url), 'utf8')
   .split('ERASER_CURSOR_SCRIPT = r"""')[1].split('"""')[0];
-const protocol = fs.readFileSync(new URL('../beamerplus/PenProtocol.py', import.meta.url), 'utf8')
+const protocol = fs.readFileSync(new URL('../notesync/PenProtocol.py', import.meta.url), 'utf8')
   .split('PEN_PROTOCOL_SCRIPT = r"""')[1].split('"""')[0];
-const inputSource = fs.readFileSync(new URL('../beamerplus/TabletInput.py', import.meta.url), 'utf8');
+const inputSource = fs.readFileSync(new URL('../notesync/TabletInput.py', import.meta.url), 'utf8');
 const metrics = inputSource.slice(inputSource.indexOf('    function getNotebookEraserMetrics()'),
   inputSource.indexOf('    function eraseAt(pos)'));
 

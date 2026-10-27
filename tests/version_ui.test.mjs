@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 
-const script=fs.readFileSync(new URL('../beamerplus/TabletVersion.py',import.meta.url),'utf8')
+const script=fs.readFileSync(new URL('../notesync/TabletVersion.py',import.meta.url),'utf8')
   .split('VERSION_SCRIPT = r"""')[1].split('"""')[0].replace('__CLIENT_BUILD__','test-build-v1');
 
 function harness(){
@@ -41,7 +41,7 @@ function harness(){
     function flushNotebookTitle(){lockChecks.push(['flush-title',notebookUpdateInputLocked]);events.push('flush-title');}
     function sendWS(message){lockChecks.push(['send',notebookUpdateInputLocked]);events.push('send:'+message.type);if(!canSend||!connected)return false;sent.push(structuredClone(message));return true;}
     function handleServerMessage(message){handled.push(structuredClone(message));}
-    function updateAssistantConnection(value){connected=value;events.push('connection:'+value);}
+    function updateExtensionConnection(value){connected=value;events.push('connection:'+value);}
   `+script,context);
   const run=code=>vm.runInContext(code,context);
   const read=code=>JSON.parse(run(`JSON.stringify((${code})??null)`));
@@ -88,11 +88,11 @@ test('failed transmission retains the draft and leaves the update action retryab
 });
 
 test('disconnect releases an update request and ignores its late save result',()=>{
-  const h=harness();const original=h.read('draft');h.click();const oldId=h.read('notebookUpdateRequest');h.run('updateAssistantConnection(false)');
+  const h=harness();const original=h.read('draft');h.click();const oldId=h.read('notebookUpdateRequest');h.run('updateExtensionConnection(false)');
   assert.equal(h.read('notebookUpdateRequest'),null);assert.equal(h.read('notebookUpdateButton.disabled'),false);assert.match(h.read('notebookUpdateButton.textContent'),/再接続/);assert.deepEqual(h.read('draft'),original);
   assert.equal(h.read('notebookUpdateInputLocked'),false);assert.equal(h.read('notebookRoot.inert'),false);assert.equal(h.read('alreadyLockedPanel.inert'),true);
   h.message({type:'note_library_result',requestId:oldId,ok:true});assert.equal(h.read('reloads'),0);
-  h.run('updateAssistantConnection(true);time+=100');h.click();assert.notEqual(h.read('notebookUpdateRequest'),oldId);h.result();assert.equal(h.read('reloads'),1);
+  h.run('updateExtensionConnection(true);time+=100');h.click();assert.notEqual(h.read('notebookUpdateRequest'),oldId);h.result();assert.equal(h.read('reloads'),1);
 });
 
 test('an unsolicited result without any pending update never reloads the page',()=>{

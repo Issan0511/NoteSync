@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 
-const source=fs.readFileSync(new URL('../beamerplus/TabletSelection.py',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../notesync/TabletSelection.py',import.meta.url),'utf8');
 const geometry=source.split('SELECTION_GEOMETRY_SCRIPT = r"""')[1].split('"""')[0];
 const script=geometry+source.split('SELECTION_SCRIPT = SELECTION_GEOMETRY_SCRIPT + r"""')[1].split('"""')[0];
 
@@ -89,7 +89,7 @@ function harness(){
     function adjustLayout(){renderAllStrokes(sketchbookStrokes);}
     function refreshNotebookView(){}
     function closeOverlays(){}
-    function updateAssistantConnection(){}
+    function updateExtensionConnection(){}
     function sendWS(message){if(!canSend)return false;sent.push(structuredClone(message));return true;}
     function handleServerMessage(msg){
       if(msg.type==='state_sync'){

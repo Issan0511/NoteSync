@@ -10,9 +10,9 @@ import unittest
 from unittest.mock import patch
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from beamerplus.NotebookModel import NotebookStore
-from beamerplus.NotebookStorage import DirectoryLibrary, read_library, sha, atomic, note_digest
-from beamerplus.NotebookExports import create_notebook_backup, parse_notebook_backup
+from notesync.NotebookModel import NotebookStore
+from notesync.NotebookStorage import DirectoryLibrary, read_library, sha, atomic, note_digest
+from notesync.NotebookExports import create_notebook_backup, parse_notebook_backup
 
 class DirectoryStorageTests(unittest.TestCase):
     def setUp(self):
@@ -75,7 +75,7 @@ class DirectoryStorageTests(unittest.TestCase):
         def fail_index(path, data):
             if Path(path).name == 'index.json': raise OSError('disk full')
             return atomic(path, data)
-        with patch('beamerplus.NotebookStorage.atomic', side_effect=fail_index):
+        with patch('notesync.NotebookStorage.atomic', side_effect=fail_index):
             with self.assertRaises(OSError): self.store.save()
         self.assertEqual(read_library(self.store.path)['notes'], before)
         self.store.save()
@@ -110,7 +110,7 @@ class DirectoryStorageTests(unittest.TestCase):
     def test_public_pdf_export_keeps_original_and_all_pages(self):
         self.attach(); self.store.new_page(); self.store.save()
         source = self.note_path(); before = source.read_bytes(); output = self.root / 'answer.pdf'
-        run = subprocess.run([sys.executable, '-m', 'beamerplus.NotebookSources', str(source), str(output)], capture_output=True, timeout=30)
+        run = subprocess.run([sys.executable, '-m', 'notesync.NotebookSources', str(source), str(output)], capture_output=True, timeout=30)
         self.assertEqual(run.returncode, 0, run.stderr.decode())
         import pymupdf
         with pymupdf.open(output) as pdf: self.assertEqual(pdf.page_count, 2)

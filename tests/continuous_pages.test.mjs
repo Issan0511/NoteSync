@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 
-const source=fs.readFileSync(new URL('../beamerplus/TabletContinuous.py',import.meta.url),'utf8').split('CONTINUOUS_SCRIPT = r"""')[1].split('"""')[0];
+const source=fs.readFileSync(new URL('../notesync/TabletContinuous.py',import.meta.url),'utf8').split('CONTINUOUS_SCRIPT = r"""')[1].split('"""')[0];
 function section(start,end){return source.slice(source.indexOf(start),source.indexOf(end));}
 const geometry=section('function notebookFitScale','function continuousRow');
 const fit=section('function fitNotebookPage','function scrollNotebookWheel');

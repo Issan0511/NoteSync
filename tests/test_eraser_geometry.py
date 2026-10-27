@@ -6,9 +6,9 @@ import unittest
 
 from PySide6.QtCore import QRectF
 
-from beamerplus.DrawingModel import Stroke, stroke_intersects_circle, clip_stroke_by_circle
-from beamerplus.MainWindow import MainWindow
-from beamerplus.NotebookModel import NotebookController
+from notesync.InkModel import Stroke, stroke_intersects_circle, clip_stroke_by_circle
+from notesync.NotebookInput import NotebookInputMixin
+from notesync.NotebookModel import NotebookController
 
 
 class EraserGeometryTests(unittest.TestCase):
@@ -63,18 +63,18 @@ class EraserGeometryTests(unittest.TestCase):
     def test_server_accepts_zoom_compensated_radius_without_reapplying_minimum(self):
         calls = []
         controller = SimpleNamespace(erase_at_point=lambda *args, **kwargs:calls.append((args, kwargs)))
-        host = SimpleNamespace(controller=controller, slide_view=SimpleNamespace(
-            canvas=SimpleNamespace(_get_slide_rect=lambda:QRectF(0, 0, 600, 800))))
-        MainWindow._on_web_erase_requested(host, dict(normX=.5, normY=.5, mode='stroke', size=5, radius=.0016))
+        host = SimpleNamespace(controller=controller, drawing_view=SimpleNamespace(
+            canvas=SimpleNamespace(_get_page_rect=lambda:QRectF(0, 0, 600, 800))))
+        NotebookInputMixin._on_web_erase_requested(host, dict(normX=.5, normY=.5, mode='stroke', size=5, radius=.0016))
         self.assertEqual(calls[-1][1]['threshold'], .0016)
         self.assertEqual(calls[-1][1]['aspect_ratio'], .75)
-        MainWindow._on_web_erase_requested(host, dict(normX=.5, normY=.5, mode='stroke', size=5))
+        NotebookInputMixin._on_web_erase_requested(host, dict(normX=.5, normY=.5, mode='stroke', size=5))
         self.assertEqual(calls[-1][1]['threshold'], .008,'legacy clients keep their old radius')
-        MainWindow._on_web_erase_requested(host, dict(size=70, radius=.7))
+        NotebookInputMixin._on_web_erase_requested(host, dict(size=70, radius=.7))
         self.assertEqual(calls[-1][1]['threshold'], .7,'a fixed-size circle can span a deeply zoomed-out page')
         before = len(calls)
         for radius in (None, True, '0.01', math.nan, math.inf, -1, 0, 9):
-            MainWindow._on_web_erase_requested(host, dict(size=25, radius=radius))
+            NotebookInputMixin._on_web_erase_requested(host, dict(size=25, radius=radius))
         self.assertEqual(len(calls), before)
 
 

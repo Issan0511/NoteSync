@@ -13,9 +13,9 @@ from PySide6.QtGui import QImage, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QApplication
 
-from beamerplus.NotebookExports import create_notebook_backup, parse_notebook_backup
-from beamerplus.NotebookText import annotation_payload, paint_note_texts, prepare_text, text_bounds
-from beamerplus.NotebookWindow import NotebookWindow
+from notesync.NotebookExports import create_notebook_backup, parse_notebook_backup
+from notesync.NotebookText import annotation_payload, paint_note_texts, prepare_text, text_bounds
+from notesync.NotebookWindow import NotebookWindow
 
 
 class AnnotationMathTests(unittest.TestCase):
@@ -88,9 +88,9 @@ class AnnotationMathTests(unittest.TestCase):
 
     def test_mcp_write_and_initial_sync_contain_the_same_math_payload(self):
         with tempfile.TemporaryDirectory() as directory, \
-                patch('beamerplus.WebServer.WebServer.start'), \
-                patch('beamerplus.WebServer.WebServer.stop'), \
-                patch('beamerplus.NotebookWindow.NotebookBridge', return_value=None):
+                patch('notesync.WebServer.WebServer.start'), \
+                patch('notesync.WebServer.WebServer.stop'), \
+                patch('notesync.NotebookWindow.NotebookBridge', return_value=None):
             window = NotebookWindow(store_path=Path(directory) / 'notes.json')
             try:
                 events = []

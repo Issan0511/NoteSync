@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 
-const source=fs.readFileSync(new URL('../beamerplus/TabletText.py',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../notesync/TabletText.py',import.meta.url),'utf8');
 const drawScript=source.split('NOTE_TEXT_SCRIPT = r"""')[1].split('"""')[0];
 const installScript=source.split('INSTALL_TEXT_SCRIPT = r"""')[1].split('"""')[0];
 const svg='<svg xmlns="http://www.w3.org/2000/svg" width="64" height="40"><text>研究 x²</text></svg>';

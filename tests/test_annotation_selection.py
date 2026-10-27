@@ -16,11 +16,11 @@ from PySide6.QtCore import QRectF
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QApplication
 
-from beamerplus.DrawingModel import text_intersects_circle
-from beamerplus.NotebookExports import create_notebook_backup, parse_notebook_backup
-from beamerplus.NotebookModel import NotebookController, NotebookStore, InkEditConflict
-from beamerplus.NotebookText import annotation_payload, paint_note_texts, prepare_text, text_bounds, transform_note_text
-from beamerplus.NotebookWindow import NotebookWindow
+from notesync.InkModel import text_intersects_circle
+from notesync.NotebookExports import create_notebook_backup, parse_notebook_backup
+from notesync.NotebookModel import NotebookController, NotebookStore, InkEditConflict
+from notesync.NotebookText import annotation_payload, paint_note_texts, prepare_text, text_bounds, transform_note_text
+from notesync.NotebookWindow import NotebookWindow
 
 
 class AnnotationSelectionTests(unittest.TestCase):
@@ -164,8 +164,8 @@ class AnnotationSelectionWindowTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def test_window_ack_contains_canonical_transformed_text_and_reopen_preserves_it(self):
-        with tempfile.TemporaryDirectory() as folder, patch('beamerplus.WebServer.WebServer.start'), patch(
-                'beamerplus.WebServer.WebServer.stop'), patch('beamerplus.NotebookWindow.NotebookBridge',return_value=None):
+        with tempfile.TemporaryDirectory() as folder, patch('notesync.WebServer.WebServer.start'), patch(
+                'notesync.WebServer.WebServer.stop'), patch('notesync.NotebookWindow.NotebookBridge',return_value=None):
             path=Path(folder)/'notes.json'
             window=NotebookWindow(path)
             try:

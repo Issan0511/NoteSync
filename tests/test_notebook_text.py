@@ -3,8 +3,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from beamerplus.NotebookModel import NotebookController, NotebookStore
-from beamerplus.NotebookText import text_bounds
+from notesync.NotebookModel import NotebookController, NotebookStore
+from notesync.NotebookText import text_bounds
 
 
 class NotebookTextTests(unittest.TestCase):

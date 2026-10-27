@@ -3,11 +3,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 
-const protocolScript = fs.readFileSync(new URL('../beamerplus/PenProtocol.py', import.meta.url), 'utf8')
+const protocolScript = fs.readFileSync(new URL('../notesync/PenProtocol.py', import.meta.url), 'utf8')
   .split('PEN_PROTOCOL_SCRIPT = r"""')[1].split('"""')[0];
-const inputScript = protocolScript + fs.readFileSync(new URL('../beamerplus/TabletInput.py', import.meta.url), 'utf8')
+const inputScript = protocolScript + fs.readFileSync(new URL('../notesync/TabletInput.py', import.meta.url), 'utf8')
   .split('INPUT_SCRIPT = PEN_PROTOCOL_SCRIPT + r"""')[1].split('"""')[0];
-const notebookSource = fs.readFileSync(new URL('../beamerplus/TabletNotebook.py', import.meta.url), 'utf8');
+const notebookSource = fs.readFileSync(new URL('../notesync/TabletNotebook.py', import.meta.url), 'utf8');
 const favoriteShortcutScript = notebookSource.slice(notebookSource.indexOf('    let favoriteGesture=null;'),
   notebookSource.indexOf("    $('open-favorites').addEventListener"));
 
@@ -514,7 +514,7 @@ test('double clicking over a selection frame also returns to pen; zoom controls 
 });
 
 test('a delayed selection acknowledgement preserves the pen mode chosen by the shortcut',()=>{
-  const source=fs.readFileSync(new URL('../beamerplus/TabletSelection.py',import.meta.url),'utf8');
+  const source=fs.readFileSync(new URL('../notesync/TabletSelection.py',import.meta.url),'utf8');
   const start=source.indexOf('handleServerMessage=function(msg){');
   const handler=source.slice(start,source.indexOf('\n};',start)+3);
   const context=vm.createContext({});

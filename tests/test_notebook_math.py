@@ -9,8 +9,8 @@ from PySide6.QtCore import QByteArray, QRectF
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtSvg import QSvgRenderer
 
-from beamerplus import NotebookMath as notebook_math
-from beamerplus.NotebookMath import MathSvg, render_math_svg
+from notesync import NotebookMath as notebook_math
+from notesync.NotebookMath import MathSvg, render_math_svg
 
 
 ENTROPY = (r'H(X\mid Y)=-\sum_{y\in\mathcal{Y}}p(y)'

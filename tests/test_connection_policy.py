@@ -4,20 +4,20 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from beamerplus.ConnectionPolicy import ConnectionPolicy, websocket_origin_allowed
+from notesync.ConnectionPolicy import ConnectionPolicy, websocket_origin_allowed
 
 
 class ConnectionPolicyTests(unittest.TestCase):
     def test_only_loopback_bypasses_without_tailscale(self):
-        with patch('beamerplus.ConnectionPolicy.shutil.which', return_value=None):
+        with patch('notesync.ConnectionPolicy.shutil.which', return_value=None):
             policy = ConnectionPolicy()
             for host in ['127.0.0.1', '::1']:
                 self.assertTrue(policy.passwordless(host))
             for host in ['192.168.3.168', '8.8.8.8', '100.81.103.50', 'hostname', 'fd7a:115c:a1e0::1']:
                 self.assertFalse(policy.passwordless(host))
 
-    @patch('beamerplus.ConnectionPolicy.shutil.which', return_value='/usr/bin/tailscale')
-    @patch('beamerplus.ConnectionPolicy.subprocess.run')
+    @patch('notesync.ConnectionPolicy.shutil.which', return_value='/usr/bin/tailscale')
+    @patch('notesync.ConnectionPolicy.subprocess.run')
     def test_verified_node_is_cached(self, run, which):
         run.return_value = SimpleNamespace(returncode=0, stdout=json.dumps({'Node': {'ID': 123}}))
         policy = ConnectionPolicy()
@@ -26,8 +26,8 @@ class ConnectionPolicyTests(unittest.TestCase):
         run.assert_called_once_with(['/usr/bin/tailscale', 'whois', '--json', '100.81.103.50'],
                                     capture_output=True, text=True, timeout=2)
 
-    @patch('beamerplus.ConnectionPolicy.shutil.which', return_value='/usr/bin/tailscale')
-    @patch('beamerplus.ConnectionPolicy.subprocess.run')
+    @patch('notesync.ConnectionPolicy.shutil.which', return_value='/usr/bin/tailscale')
+    @patch('notesync.ConnectionPolicy.subprocess.run')
     def test_range_alone_and_failed_verification_do_not_bypass(self, run, which):
         for identity in [{}, {'Node': {}}, {'Node': {'ID': 123, 'Expired': True}}, [], None]:
             run.return_value = SimpleNamespace(returncode=0, stdout=json.dumps(identity))

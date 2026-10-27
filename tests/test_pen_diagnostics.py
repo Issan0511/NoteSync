@@ -1,6 +1,6 @@
 import unittest
 
-from beamerplus.PenDiagnostics import sanitize
+from notesync.PenDiagnostics import sanitize
 
 
 class PenDiagnosticsTests(unittest.TestCase):

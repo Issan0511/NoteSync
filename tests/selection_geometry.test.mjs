@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import {test} from 'node:test';
 
 function model(file,name){
-  const source=fs.readFileSync(new URL('../beamerplus/'+file,import.meta.url),'utf8').split(name+' = r"""')[1].split('"""')[0];
+  const source=fs.readFileSync(new URL('../notesync/'+file,import.meta.url),'utf8').split(name+' = r"""')[1].split('"""')[0];
   const context=vm.createContext({});vm.runInContext(source,context);return code=>vm.runInContext(code,context);
 }
 const geometry=model('TabletSelection.py','SELECTION_GEOMETRY_SCRIPT');

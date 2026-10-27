@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from beamerplus.NotebookModel import InkEditConflict, NotebookController, NotebookStore
-from beamerplus.NotebookWindow import NotebookWindow
+from notesync.NotebookModel import InkEditConflict, NotebookController, NotebookStore
+from notesync.NotebookWindow import NotebookWindow
 
 
 class NotebookTests(unittest.TestCase):
@@ -207,7 +207,7 @@ class NotebookTests(unittest.TestCase):
             store.save()
             previous = path.read_text()
             store.active['title'] = '変更後'
-            with patch('beamerplus.NotebookModel.os.replace', side_effect=PermissionError):
+            with patch('notesync.NotebookModel.os.replace', side_effect=PermissionError):
                 with self.assertRaises(PermissionError):
                     store.save()
             self.assertEqual(path.read_text(), previous)

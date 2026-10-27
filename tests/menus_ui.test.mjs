@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 
-const menuSource=fs.readFileSync(new URL('../beamerplus/TabletMenus.py',import.meta.url),'utf8');
+const menuSource=fs.readFileSync(new URL('../notesync/TabletMenus.py',import.meta.url),'utf8');
 const script=menuSource.split('MENUS_SCRIPT = r"""')[1].split('"""')[0];
-const librarySource=fs.readFileSync(new URL('../beamerplus/TabletLibrary.py',import.meta.url),'utf8');
+const librarySource=fs.readFileSync(new URL('../notesync/TabletLibrary.py',import.meta.url),'utf8');
 const library=librarySource.split('LIBRARY_MODEL_SCRIPT = r"""')[1].split('"""')[0]+librarySource.split('LIBRARY_SCRIPT = LIBRARY_MODEL_SCRIPT + r"""')[1].split('"""')[0];
 
 function harness(){
@@ -60,7 +60,7 @@ function harness(){
       if(message.type==='state_sync'){if(message.notes)notes=structuredClone(message.notes);currentDocumentId=message.documentId||currentDocumentId;currentNotebookId=message.notebookId||message.documentId||currentNotebookId;renderNotes();}
       else if(message.type==='note_ink_edit_result'&&message.requestId===selectionRequest)selectionRequest=null;
     }
-    function updateAssistantConnection(connected){notebookReady=connected;}
+    function updateExtensionConnection(connected){notebookReady=connected;}
   `,context);
   vm.runInContext(library+script,context);
   const run=code=>vm.runInContext(code,context);
@@ -76,7 +76,7 @@ function harness(){
 
 test('connecting does not claim saved until the PC confirms a save state',()=>{
   const h=harness();assert.equal(h.read('notebookSaveState'),'connecting');
-  h.run('updateAssistantConnection(true)');assert.equal(h.read('notebookSaveState'),'connecting');assert.equal(h.read("$('save-status').textContent"),'接続中');
+  h.run('updateExtensionConnection(true)');assert.equal(h.read('notebookSaveState'),'connecting');assert.equal(h.read("$('save-status').textContent"),'接続中');
   h.sync();assert.equal(h.read('notebookSaveState'),'saved');assert.equal(h.read("$('save-detail-title').textContent"),'PCに保存済み');
 });
 
@@ -144,7 +144,7 @@ test('failed correlated file requests show the backend reason and reenable file 
 });
 
 test('disconnect releases pending file requests and removes saved status',()=>{
-  const h=harness();h.sync();h.run("requestNotebookFile('backup_all')");const requestId=h.read('[...notebookFileRequests.keys()][0]');h.run('updateAssistantConnection(false)');
+  const h=harness();h.sync();h.run("requestNotebookFile('backup_all')");const requestId=h.read('[...notebookFileRequests.keys()][0]');h.run('updateExtensionConnection(false)');
   assert.equal(h.read('notebookSaveState'),'offline');assert.equal(h.read('notebookFileRequests.size'),0);assert.equal(h.read('fileButtons.every(button=>!button.disabled)'),true);assert.match(h.read("$('notebook-file-message').textContent"),/接続が切れ/);
   h.message({type:'note_file_result',requestId,ok:true,data:'e30=',mime:'application/json',filename:'stale.spennotes'});assert.equal(h.read('downloads.length'),0);
 });
@@ -178,9 +178,9 @@ test('erase completion creates a checkpoint only while a change is waiting for s
 
 test('disconnect clears the required checkpoint and deferred ACK before a new connection',()=>{
   const h=harness();h.sync();h.run("sendWS({type:'undo'})");const oldCheckpoint=h.checkpoint();
-  h.saved();assert.notEqual(h.read('notebookDeferredSave'),null);h.run('updateAssistantConnection(false)');
+  h.saved();assert.notEqual(h.read('notebookDeferredSave'),null);h.run('updateExtensionConnection(false)');
   assert.equal(h.checkpoint(),null);assert.equal(h.read('notebookDeferredSave'),null);assert.equal(h.read('notebookSaveState'),'offline');
-  h.run('updateAssistantConnection(true)');assert.equal(h.read('notebookSaveState'),'connecting');h.sync();
+  h.run('updateExtensionConnection(true)');assert.equal(h.read('notebookSaveState'),'connecting');h.sync();
   h.run("sendWS({type:'redo'})");const nextCheckpoint=h.checkpoint();assert.notEqual(nextCheckpoint,oldCheckpoint);
   h.saved({saveCheckpoints:[oldCheckpoint]});assert.equal(h.read('notebookSaveState'),'dirty');
   h.acknowledgeCheckpoint();assert.equal(h.read('notebookSaveState'),'saved');

@@ -10,8 +10,8 @@ import pymupdf as fitz
 from PySide6.QtCore import QRect
 from PySide6.QtGui import QColor, QImage, QPainter
 
-from beamerplus import NotebookExports as notebook_exports
-from beamerplus.NotebookExports import (
+from notesync import NotebookExports as notebook_exports
+from notesync.NotebookExports import (
     MAX_BACKUP_BYTES,
     create_notebook_backup,
     image_to_pdf_bytes,
@@ -152,9 +152,9 @@ class NotebookExportTests(unittest.TestCase):
         second.pop('texts')
         with self.assertRaises(ValueError):
             parse_notebook_backup(payload([first for _ in range(201)]))
-        with patch('beamerplus.NotebookExports.MAX_POINTS', 3), self.assertRaises(ValueError):
+        with patch('notesync.NotebookExports.MAX_POINTS', 3), self.assertRaises(ValueError):
             parse_notebook_backup(payload([first, second]))
-        with patch('beamerplus.NotebookExports.MAX_STROKES', 1), self.assertRaises(ValueError):
+        with patch('notesync.NotebookExports.MAX_STROKES', 1), self.assertRaises(ValueError):
             parse_notebook_backup(payload([first, second]))
 
     def test_collection_roundtrip_preserves_trash_and_live_note_status(self):
@@ -244,12 +244,12 @@ class NotebookExportTests(unittest.TestCase):
 
 class NotebookExportWithoutTextTests(unittest.TestCase):
     def setUp(self):
-        source = Path(__file__).resolve().parents[1] / 'beamerplus' / 'NotebookExports.py'
+        source = Path(__file__).resolve().parents[1] / 'notesync' / 'NotebookExports.py'
         spec = importlib.util.spec_from_file_location('exports_without_optional_text_test', source)
         self.exports = importlib.util.module_from_spec(spec)
         # Simulate an older installation without deleting or modifying another
         # worker's optional NotebookText.py in the shared checkout.
-        with patch.dict(sys.modules, {'beamerplus.NotebookText': None}):
+        with patch.dict(sys.modules, {'notesync.NotebookText': None}):
             spec.loader.exec_module(self.exports)
 
     def test_ink_backup_roundtrip_works_without_optional_text_module(self):

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {test} from 'node:test';
 
-const source=fs.readFileSync(new URL('../beamerplus/TabletLibrary.py',import.meta.url),'utf8');
+const source=fs.readFileSync(new URL('../notesync/TabletLibrary.py',import.meta.url),'utf8');
 const model=source.split('LIBRARY_MODEL_SCRIPT = r"""')[1].split('"""')[0];
 const script=model+source.split('LIBRARY_SCRIPT = LIBRARY_MODEL_SCRIPT + r"""')[1].split('"""')[0];
 
@@ -48,7 +48,7 @@ function harness(){
     function renderNotes(){}
     function sendWS(message){if(!notebookReady)return false;events.push('send:'+message.type);sent.push(structuredClone(message));return true;}
     function handleServerMessage(msg){if(msg.type==='state_sync'){if(msg.notes)notes=structuredClone(msg.notes);currentDocumentId=msg.documentId||currentDocumentId;currentNotebookId=msg.notebookId||msg.documentId||currentNotebookId;renderNotes();}}
-    function updateAssistantConnection(connected){notebookReady=connected;}
+    function updateExtensionConnection(connected){notebookReady=connected;}
     $('library-overlay').hidden=true;
   `,context);
   vm.runInContext(script,context);
@@ -121,13 +121,13 @@ test('the card menu offers rename, duplicate and reversible trash actions',()=>{
 });
 
 test('offline navigation keeps the library open and provides a retry message',()=>{
-  const h=harness();h.click('open-library');h.run('updateAssistantConnection(false)');h.run("beginNotebookLibraryNavigation('select','b')");
+  const h=harness();h.click('open-library');h.run('updateExtensionConnection(false)');h.run("beginNotebookLibraryNavigation('select','b')");
   assert.equal(h.read('sent.length'),0);assert.equal(h.read('notebookLibraryPending'),null);assert.equal(h.read("$('library-overlay').hidden"),false);assert.equal(h.read("$('new-note').disabled"),true);assert.match(h.read("$('library-message').textContent"),/PCに接続/);
 });
 
 test('view/sort changes persist in the browser without affecting note data',()=>{
   const h=harness();h.click('library-list');h.run("$('library-sort').value='title';$('library-sort').dispatch('change')");
-  assert.equal(h.read("stored.get('beamerplus_library_view')"),'list');assert.equal(h.read("stored.get('beamerplus_library_sort')"),'title');assert.equal(h.read("$('notebook-list').classes.has('library-list-view')"),true);
+  assert.equal(h.read("stored.get('notesync_library_view')"),'list');assert.equal(h.read("stored.get('notesync_library_sort')"),'title');assert.equal(h.read("$('notebook-list').classes.has('library-list-view')"),true);
 });
 
 test('the current notebook card stays marked while a later page has its own document ID',()=>{

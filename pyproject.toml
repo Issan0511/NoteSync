@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "beamerplus"
-version = "0.2.4"
-description = "A handwritten notebook for Samsung S Pen with Claude Sonnet assistance"
+name = "notesync"
+version = "0.3.0"
+description = "Handwritten notebooks, storage and live synchronization"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -22,12 +22,12 @@ dependencies = [
 mcp = ["mcp>=1.26,<2"]
 
 [project.scripts]
-beamerplus = "beamerplus.main:main"
-beamerplus-mcp = "beamerplus.NotebookMCP:main"
-beamerplus-export = "beamerplus.NotebookSources:main"
+notesync = "notesync.main:main"
+notesync-mcp = "notesync.NotebookMCP:main"
+notesync-export = "notesync.NotebookSources:main"
 
 [project.gui-scripts]
-beamerplus-gui = "beamerplus.main:main"
+notesync-gui = "notesync.main:main"
 
 [tool.setuptools.packages.find]
-include = ["beamerplus*"]
+include = ["notesync*"]
