@@ -7,6 +7,9 @@ const script = fs.readFileSync(new URL('../beamerplus/TabletEraserCursor.py', im
   .split('ERASER_CURSOR_SCRIPT = r"""')[1].split('"""')[0];
 const protocol = fs.readFileSync(new URL('../beamerplus/PenProtocol.py', import.meta.url), 'utf8')
   .split('PEN_PROTOCOL_SCRIPT = r"""')[1].split('"""')[0];
+const inputSource = fs.readFileSync(new URL('../beamerplus/TabletInput.py', import.meta.url), 'utf8');
+const metrics = inputSource.slice(inputSource.indexOf('    function getNotebookEraserMetrics()'),
+  inputSource.indexOf('    function eraseAt(pos)'));
 
 function harness(userAgent = '') {
   const context = vm.createContext({});
@@ -46,7 +49,7 @@ function harness(userAgent = '') {
       constructor(callback) { this.callback = callback; observers.push(this); }
       observe() {}
     }
-  ` + protocol + `
+  ` + metrics + protocol + `
     const penProtocol = new PenProtocol(${JSON.stringify(userAgent)});
     let protocolReads = 0;
     const originalRead = penProtocol.read.bind(penProtocol);
@@ -68,17 +71,23 @@ function harness(userAgent = '') {
   return {evaluate, fire, state};
 }
 
-test('circle matches server height-based radius for landscape, zoom and portrait pages', () => {
+test('circle stays the same screen size at 100%, 200% and 500% zoom', () => {
   const h = harness();
   h.fire('pointermove');
   assert.equal(h.state().style.width, '30px');
   h.evaluate('slideWrapper.rect = {left:0,top:0,width:2000,height:1200}; refreshEraserCursor()');
-  assert.equal(h.state().style.width, '60px');
-  assert.equal(h.state().style.height, '60px');
-  h.evaluate('slideWrapper.rect = {left:0,top:0,width:600,height:1000}; refreshEraserCursor()');
+  assert.equal(h.state().style.width, '30px');
+  assert.equal(h.state().style.height, '30px');
+  assert.equal(h.evaluate('getNotebookEraserMetrics().pageRadius'), .0125);
+  h.evaluate('slideWrapper.rect = {left:0,top:0,width:5000,height:3000}; refreshEraserCursor()');
+  assert.equal(h.state().style.width, '30px');
+  assert.equal(h.evaluate('getNotebookEraserMetrics().pageRadius'), .005);
+  h.evaluate('slideWrapper.clientHeight = 1000; slideWrapper.rect = {left:0,top:0,width:600,height:1000}; refreshEraserCursor()');
   assert.equal(h.state().style.width, '50px');
   assert.equal(h.state().style.left, '250px');
   assert.equal(h.state().style.top, '200px');
+  h.evaluate('slideWrapper.rect = {left:0,top:0,width:3000,height:5000}; refreshEraserCursor()');
+  assert.equal(h.state().style.width, '50px');
 });
 
 test('minimum radius and integer size use the same rules as the server', () => {

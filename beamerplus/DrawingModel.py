@@ -101,34 +101,55 @@ def text_intersects_circle(item: TextItem, center: tuple[float, float], r: float
     return (dx * dx + dy * dy) <= (r * r)
 
 
+def _stroke_half_width(stroke, aspect_ratio, first=None, second=None):
+    """Visible ink radius in page-height units, matching the pressure renderer."""
+    radius = stroke.width_ratio * min(1.0, aspect_ratio) / 2
+    if stroke.brush == 'fountain' and first is not None and second is not None:
+        pressure = ((first[2] if len(first) > 2 else 1) + (second[2] if len(second) > 2 else 1)) / 2
+        radius *= .35 + .9 * pressure
+    return radius
+
+
 def stroke_intersects_circle(stroke: Stroke, center: tuple[float, float], r: float, aspect_ratio: float = 1.0) -> bool:
-    """ストローク（点列および線分）が円 (center, r) と交差するか判定"""
+    """消しゴム円が線の外縁に触れた時点で判定（線幅・筆圧を含む）。"""
     if not stroke.points:
         return False
     if len(stroke.points) == 1:
         dx = (stroke.points[0][0] - center[0]) * aspect_ratio
         dy = stroke.points[0][1] - center[1]
-        return (dx * dx + dy * dy) < (r * r)
+        return (dx * dx + dy * dy) <= (r + _stroke_half_width(stroke, aspect_ratio)) ** 2 + 1e-14
 
     cx, cy = center[0] * aspect_ratio, center[1]
-    r_sq = r * r
 
     for i in range(len(stroke.points) - 1):
         p1 = stroke.points[i]
         p2 = stroke.points[i + 1]
+        half_width = _stroke_half_width(stroke, aspect_ratio, p1, p2)
+        r_sq = (r + half_width) ** 2
         x1, y1 = p1[0] * aspect_ratio, p1[1]
         x2, y2 = p2[0] * aspect_ratio, p2[1]
         dx = x2 - x1
         dy = y2 - y1
         l2 = dx * dx + dy * dy
         if l2 == 0.0:
-            if ((cx - x1) ** 2 + (cy - y1) ** 2) < r_sq:
+            if ((cx - x1) ** 2 + (cy - y1) ** 2) <= r_sq + 1e-14:
                 return True
             continue
-        t = max(0.0, min(1.0, ((cx - x1) * dx + (cy - y1) * dy) / l2))
+        projection = ((cx - x1) * dx + (cy - y1) * dy) / l2
+        t = max(0.0, min(1.0, projection))
+        if stroke.brush == 'highlighter' and (projection < 0 and i == 0
+                                              or projection > 1 and i == len(stroke.points) - 2):
+            # A highlighter has flat end caps: do not extend the ink past its
+            # first/last endpoint merely because its line is wide.
+            length = math.sqrt(l2)
+            along = (projection - t) * length
+            across = abs((cx - x1) * dy - (cy - y1) * dx) / length
+            if along * along + max(0, across - half_width) ** 2 <= r * r + 1e-14:
+                return True
+            continue
         proj_x = x1 + t * dx
         proj_y = y1 + t * dy
-        if ((cx - proj_x) ** 2 + (cy - proj_y) ** 2) < r_sq:
+        if ((cx - proj_x) ** 2 + (cy - proj_y) ** 2) <= r_sq + 1e-14:
             return True
     return False
 
@@ -161,6 +182,8 @@ def clip_stroke_by_circle(stroke: Stroke, center: tuple[float, float], r: float,
     for i in range(len(stroke.points) - 1):
         p1 = stroke.points[i]
         p2 = stroke.points[i + 1]
+        # Leave each surviving round cap outside the visible eraser circle.
+        r_sq = (r + _stroke_half_width(stroke, aspect_ratio, p1, p2)) ** 2
 
         x1 = (p1[0] - cx) * aspect_ratio
         y1 = p1[1] - cy

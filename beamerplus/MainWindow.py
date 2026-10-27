@@ -1,4 +1,5 @@
 import os
+import math
 import uuid
 from PySide6.QtCore import Qt, QTimer, QTime, QEvent, QByteArray, QBuffer, QIODevice, QDateTime, QPointF
 from PySide6.QtWidgets import (
@@ -786,6 +787,13 @@ class MainWindow(QMainWindow):
         aspect_ratio = rect.width() / rect.height() if rect.height() > 0 else 1.0
         eraser_size = int(size) if size is not None else self.controller.get_tool_size("eraser")
         threshold = max(0.008, eraser_size * 0.001)
+        if 'radius' in data:
+            radius = data['radius']
+            if type(radius) not in (int, float) or not math.isfinite(radius) or not 0 < radius <= .5:
+                return
+            # Already normalized against the tablet's zoomed paper height.
+            # Reapplying the legacy minimum here would enlarge a zoomed eraser.
+            threshold = radius
         self.controller.erase_at_point(
             norm_x, norm_y,
             threshold=threshold,

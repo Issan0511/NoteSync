@@ -41,12 +41,9 @@ ERASER_CURSOR_SCRIPT = r"""
             || x > Math.min(paperRect.right, stageRect.right)
             || y < Math.max(paperRect.top, stageRect.top)
             || y > Math.min(paperRect.bottom, stageRect.bottom)) { hide(); return; }
-        // The server compares y in page units and x * page aspect, so its
-        // radius is a fraction of page HEIGHT, including for portrait paper.
-        // getBoundingClientRect includes the notebook's current zoom transform.
-        const requestedSize = Number(toolSizes.eraser) || 25;
-        const radius = Math.max(.008, Math.trunc(requestedSize) * .001);
-        const diameter = radius * paperRect.height * 2;
+        // Share the exact radius sent by eraseAt; paper zoom never enlarges
+        // this screen-space circle, including on portrait paper.
+        const diameter = getNotebookEraserMetrics().screenRadius * 2;
         ring.style.width = `${diameter}px`;
         ring.style.height = `${diameter}px`;
         ring.style.left = `${x}px`;

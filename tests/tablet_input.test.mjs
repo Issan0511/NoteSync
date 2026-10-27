@@ -154,6 +154,17 @@ test('eraser sends erasing operations without creating a stroke', () => {
   assert.equal(h.state().slideStrokes.length, 0);
 });
 
+test('eraser sends the inverse-zoom page radius while keeping its screen footprint fixed', () => {
+  const h = harness();h.evaluate("currentTool='eraser'; slideWrapper.getBoundingClientRect=()=>({height:600})");
+  h.fire('pointerdown');h.fire('pointerup');
+  assert.equal(h.state().sent.find(m=>m.type==='erase').radius,.025);
+  h.evaluate('sent.length=0; slideWrapper.getBoundingClientRect=()=>({height:3000})');
+  h.fire('pointerdown');h.fire('pointerup');
+  assert.equal(h.state().sent.find(m=>m.type==='erase').radius,.005);
+  h.evaluate('sent.length=0; toolSizes.eraser=5');h.fire('pointerdown');h.fire('pointerup');
+  assert.ok(Math.abs(h.state().sent.find(m=>m.type==='erase').radius-.0016)<1e-12,'minimum is applied before zoom compensation');
+});
+
 test('mouse can draw, but right-click cannot', () => {
   const h = harness();
   h.fire('pointerdown', {pointerType:'mouse', button:2});

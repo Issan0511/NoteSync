@@ -112,9 +112,20 @@ INPUT_SCRIPT = PEN_PROTOCOL_SCRIPT + r"""
       return {identifier:e.pointerId, clientX:e.clientX, clientY:e.clientY};
     }
 
+    function getNotebookEraserMetrics() {
+      const size = Math.trunc(Number(toolSizes.eraser) || 25);
+      const baseRadius = Math.max(.008, size * .001);
+      const displayedHeight = slideWrapper.getBoundingClientRect?.().height || slideWrapper.clientHeight || 1;
+      const baseHeight = slideWrapper.clientHeight || displayedHeight;
+      // CSS pixels stay fixed during paper zoom. The wire radius uses page
+      // height units, so divide by the actual displayed (zoomed) paper height.
+      const screenRadius = baseRadius * baseHeight;
+      return {screenRadius, pageRadius:screenRadius / displayedHeight};
+    }
+
     function eraseAt(pos) {
       sendWS({type:'erase', normX:pos.normX, normY:pos.normY,
-        mode:eraserMode, size:toolSizes.eraser || 25});
+        mode:eraserMode, size:toolSizes.eraser || 25, radius:getNotebookEraserMetrics().pageRadius});
     }
 
     function onInkStart(e) {
